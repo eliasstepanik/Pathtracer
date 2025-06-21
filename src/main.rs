@@ -55,11 +55,104 @@ fn sample_disk(r: f32) -> (f32, f32) {
     (phi.cos() * r2.sqrt(), phi.sin() * r2.sqrt())
 }
 
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct Scene {
+    camera   : CameraJson,
+    render   : RenderJson,
+    materials: std::collections::HashMap<String, MaterialJson>,
+    objects  : Vec<ObjectJson>,
+    light    : LightJson,
+}
+#[derive(Deserialize)]
+struct MaterialJson { rgb:[f32;3], metallic:f32, roughness:f32, ior:f32 }
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ObjectJson {
+    Sphere { sphere: SphereDesc },
+    Plane  { plane : PlaneDesc  },
+}
+#[derive(Deserialize)] struct SphereDesc{ center:[f32;3], radius:f32, mat:String }
+#[derive(Deserialize)] struct PlaneDesc { point:[f32;3], normal:[f32;3], mat:String }
+
+#[derive(Deserialize)]
+struct LightJson { pos:[f32;3], u:[f32;3], v:[f32;3], intensity:[f32;3] }
+
+impl From<[f32;3]> for Vec3 { fn from(a:[f32;3])->Self{Vec3(a[0],a[1],a[2])} }
+
+fn to_material(j:&MaterialJson)->Material{
+    Material{
+        color:   Vec3(j.rgb[0],j.rgb[1],j.rgb[2]),
+        metallic:j.metallic,
+        roughness:j.roughness,
+        ior:j.ior,
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Material {
-    color: Vec3,          // diffuse
+    color: Vec3,
     metallic: f32,
     roughness: f32,
+    ior: f32,          // ← NEW
+}
+
+#[derive(Deserialize)]
+struct CameraJson  { pos:[f32;3], look_at:[f32;3], up:[f32;3], fov:f32, aperture:f32 }
+
+#[derive(Deserialize)]
+struct RenderJson  { width:u32, height:u32, samples:u32 }
+
+
+
+use std::fs;
+
+fn load_scene(path:&str)
+              -> (Vec<Object>, Light,
+                  CameraJson, RenderJson)          // ← new
+{
+    let data = std::fs::read_to_string(path).expect("scene file");
+    let sc:Scene = serde_json::from_str(&data).expect("json parse");
+
+    // material lookup
+    let mat_of = |name:&str| -> Material {
+        let mj = sc.materials.get(name)
+            .unwrap_or_else(|| panic!("No material '{}'", name));
+        to_material(mj)
+    };
+
+    // objects
+    let mut objs = Vec::new();
+    for o in sc.objects {
+        match o {
+            ObjectJson::Sphere{sphere} => {
+                objs.push(Object::Sphere{
+                    center: sphere.center.into(),
+                    radius: sphere.radius,
+                    material: mat_of(&sphere.mat),
+                });
+            }
+            ObjectJson::Plane{plane} => {
+                objs.push(Object::Plane{
+                    point : plane.point.into(),
+                    normal: plane.normal.into(),
+                    material: mat_of(&plane.mat),
+                });
+            }
+        }
+    }
+
+    // light
+    let lj = sc.light;
+    let light = Light{
+        pos : lj.pos.into(),
+        u   : lj.u.into(),
+        v   : lj.v.into(),
+        intensity: lj.intensity.into(),
+    };
+    (objs, light, sc.camera, sc.render)
 }
 
 enum Object {
@@ -169,52 +262,92 @@ fn render_image_name(width: u32, height: u32, samples: u32, aperture: f32, focus
         .take(6)
         .map(char::from)
         .collect();
-    format!("render_{}x{}_s{}_ap{:.2}_f{:.1}_{}.jpg", width, height, samples, aperture, focus, suffix)
+    format!("renders/render_{}x{}_s{}_ap{:.2}_f{:.1}_{}.jpg", width, height, samples, aperture, focus, suffix)
 }
 
-fn trace(ro: Vec3, rd: Vec3, objects: &[Object], light: &Light, depth: u32) -> Vec3 {
-    if depth >= 5 { return Vec3(0.0,0.0,0.0); }
-    if let Some((t, n, mat)) = intersect_closest(ro, rd, objects) {
-        let hit = ro.add(rd.scale(t));
-        // If glass-like
-        if mat.roughness < 0.05 && mat.metallic < 0.5 {
-            let reflect_dir = reflect(rd, n).normalize();
-            let refract_dir = refract(rd, n, 1.0 / 1.5).map(|v| v.normalize());
-            let fres = fresnel_schlick(rd.neg().dot(n).max(0.0), Vec3(1.0,1.0,1.0));
-            let refl = trace(hit.add(n.scale(0.001)), reflect_dir, objects, light, depth+1);
-            let refr = if let Some(rd2) = refract_dir {
-                trace(hit.sub(n.scale(0.001)), rd2, objects, light, depth+1)
-            } else { Vec3(0.0,0.0,0.0) };
-            return refl.scale(fres.0) // approximate scalar blending
-                .add(refr.scale(1.0 - fres.0));
-        }
+fn trace(ro: Vec3,
+         rd: Vec3,
+         objects: &[Object],
+         light:   &Light,
+         depth:   u32,
+         glass_bounces: u32) -> Vec3
+{
+    // ---- termination tests ------------------------------------------------
+    if depth         >= MAX_DEPTH         { return Vec3(0.0,0.0,0.0); }
+    if glass_bounces >= MAX_GLASS_BOUNCES { return Vec3(0.0,0.0,0.0); }
 
-        // Diffuse/Glossy surfaces: sample direct lighting + next bounce
-        let direct = lighting(hit, n, rd.neg(), mat, objects, light);
-        // Next bounce direction: cosine-weighted hemisphere
-        let w = n;
-        let u = if w.0.abs() > 0.1 {
-            w.cross(Vec3(0.0,1.0,0.0)).normalize()
+    // ---- intersection -----------------------------------------------------
+    let Some((t, n, mat)) = intersect_closest(ro, rd, objects) else {
+        // sky / environment
+        let t = 0.5 * (rd.1 + 1.0);
+        return Vec3(1.0,1.0,1.0).scale(1.0 - t)
+            .add(Vec3(0.5,0.7,1.0).scale(t));
+    };
+
+    let hit = ro.add(rd.scale(t));
+
+    // ---- dielectric / glass ----------------------------------------------
+    let is_glass = mat.roughness < 0.05 && mat.metallic < 0.5;
+    if is_glass {
+        let ior = mat.ior;                           // per-material IOR
+        let reflect_dir = reflect(rd, n).normalize();
+        let refract_dir = refract(rd, n, 1.0 / ior).map(|v| v.normalize());
+
+        let fres = fresnel_schlick(rd.neg().dot(n).max(0.0),
+                                   Vec3(1.0,1.0,1.0)); // white glass
+
+        let refl = trace(hit.add(n.scale(0.001)),
+                         reflect_dir,
+                         objects,
+                         light,
+                         depth + 1,
+                         glass_bounces + 1);
+
+        let refr = if let Some(rd2) = refract_dir {
+            trace(hit.sub(n.scale(0.001)),
+                  rd2,
+                  objects,
+                  light,
+                  depth + 1,
+                  glass_bounces + 1)
         } else {
-            w.cross(Vec3(1.0,0.0,0.0)).normalize()
+            Vec3(0.0,0.0,0.0) // total internal reflection handled by fresnel
         };
-        let v = w.cross(u);
-        let r1 = thread_rng().r#gen::<f32>();
-        let r2 = thread_rng().r#gen::<f32>();
-        let phi = 2.0 * PI * r1;
-        let cos_t = (1.0 - r2).sqrt();
-        let sin_t = r2.sqrt();
-        let hemi_dir = u.scale(phi.cos() * sin_t)
-            .add(v.scale(phi.sin() * sin_t))
-            .add(w.scale(cos_t))
-            .normalize();
-        let indirect = trace(hit.add(n.scale(0.001)), hemi_dir, objects, light, depth+1);
-        let albedo = mat.color;
-        return direct.add(indirect.scale(albedo.0));
+
+        return refl.scale(fres.0)
+            .add(refr.scale(1.0 - fres.0));
     }
-    // Environment
-    let t = 0.5 * (rd.1 + 1.0);
-    Vec3(1.0,1.0,1.0).scale(1.0 - t).add(Vec3(0.5,0.7,1.0).scale(t))
+
+    // ---- diffuse / glossy -------------------------------------------------
+    let direct   = lighting(hit, n, rd.neg(), mat, objects, light);
+    let w        = n;
+    let u        = if w.0.abs() > 0.1 {
+        w.cross(Vec3(0.0,1.0,0.0)).normalize()
+    } else {
+        w.cross(Vec3(1.0,0.0,0.0)).normalize()
+    };
+    let v        = w.cross(u);
+
+    // cosine-weighted hemisphere sample
+    let r1   = thread_rng().r#gen::<f32>();
+    let r2   = thread_rng().r#gen::<f32>();
+    let phi  = 2.0 * PI * r1;
+    let cos_t = (1.0 - r2).sqrt();
+    let sin_t = r2.sqrt();
+
+    let hemi_dir = u.scale(phi.cos() * sin_t)
+        .add(v.scale(phi.sin() * sin_t))
+        .add(w.scale(cos_t))
+        .normalize();
+
+    let indirect = trace(hit.add(n.scale(0.001)),
+                         hemi_dir,
+                         objects,
+                         light,
+                         depth + 1,
+                         glass_bounces);
+
+    direct.add(indirect.scale(mat.color.0)) // simple albedo weight
 }
 fn intersect_closest(ro: Vec3, rd: Vec3, objects: &[Object]) -> Option<(f32, Vec3, Material)> {
     objects.iter()
@@ -244,106 +377,66 @@ fn refract(dir: Vec3, normal: Vec3, eta: f32) -> Option<Vec3> {
     }
 }
 
+
+const MAX_DEPTH:           u32 = 12;   // total bounces
+const MAX_GLASS_BOUNCES:   u32 =  8;   // inside-glass limit
+
+
 fn main() {
-    let width=800; let height=600; 
-    let samples=1024;
-    let focus= 0.5;
-    let aperture = 0.02;  // small value, less blur
-    let fov=60f32.to_radians();
+
+    let (objects_vec, light, cam_json, rnd) = load_scene("scene.json");
+
+
+
+    let width    = rnd.width;
+    let height   = rnd.height;
+    let samples  = rnd.samples;
+    let aperture = cam_json.aperture;
+    let fov      = cam_json.fov.to_radians();
+
+    let objects = Arc::new(objects_vec);
+
+
+
     let aspect=width as f32 / height as f32;
     let scale=(fov*0.5).tan();
 
-    let cam = Vec3(0.0,0.0,0.0);
-    let up = Vec3(0.0,1.0,0.0);
-    let forward = Vec3(0.0,0.0,1.0);
-    let right = forward.cross(up).normalize();
-    let real_up = right.cross(forward).normalize();
+    let cam      = cam_json.pos.into();
+    let look_at  = cam_json.look_at.into();
+    let up       = cam_json.up.into();
 
-    let light = Light {
-        pos: Vec3(0.0, 2.95, 4.0),         // near ceiling center
-        u: Vec3(1.0, 0.0, 0.0),            // horizontal extent
-        v: Vec3(0.0, 0.0, 1.0),            // depth extent
-        intensity: Vec3(25.0, 25.0, 25.0), // bright white
-    };
-
-    let red = Material { color: Vec3(1.0, 0.0, 0.0), metallic: 0.0, roughness: 1.0 };
-    let green = Material { color: Vec3(0.0, 1.0, 0.0), metallic: 0.0, roughness: 1.0 };
-    let white = Material { color: Vec3(1.0, 1.0, 1.0), metallic: 0.0, roughness: 1.0 };
-    let mirror = Material { color: Vec3(1.0, 1.0, 1.0), metallic: 1.0, roughness: 0.01 };
-    let glass = Material { color: Vec3(1.0, 1.0, 1.0), metallic: 0.0, roughness: 0.01 };
-
-    let objects = Arc::new(vec![
-        // Room (Cornell box without ceiling center)
-        Object::Plane { point: Vec3(0.0, -1.0, 0.0), normal: Vec3(0.0, 1.0, 0.0), material: white }, // floor
-        Object::Plane { point: Vec3(0.0, 3.0, 0.0), normal: Vec3(0.0, -1.0, 0.0), material: white }, // ceiling around hole (you can add edges if needed)
-        Object::Plane { point: Vec3(0.0, 0.0, 8.0), normal: Vec3(0.0, 0.0, -1.0), material: white }, // back wall
-        Object::Plane { point: Vec3(-3.0, 0.0, 0.0), normal: Vec3(1.0, 0.0, 0.0), material: red },   // left
-        Object::Plane { point: Vec3(3.0, 0.0, 0.0), normal: Vec3(-1.0, 0.0, 0.0), material: green }, // right
-
-        // Reflective sphere
-        Object::Sphere {
-            center: Vec3(-0.8, -0.2, 4.0),
-            radius: 0.9,
-            material: mirror,
-        },
-
-        // Glass sphere
-        Object::Sphere {
-            center: Vec3(1.0, -0.3, 4.2),
-            radius: 0.7,
-            material: glass,
-        },
-    ]);
+    let forward  = look_at.sub(cam).normalize();
+    let right    = forward.cross(up).normalize();
+    let real_up  = right.cross(forward).normalize();
 
 
 
-    /*// Compute bounding box
-    let mut min = Vec3(f32::INFINITY, f32::INFINITY, f32::INFINITY);
-    let mut max = Vec3(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
 
-    for obj in objects.iter() {
-        if let Object::Sphere { center, radius, .. } = obj {
-            let r = *radius;
-            min = Vec3(
-                min.0.min(center.0 - r),
-                min.1.min(center.1 - r),
-                min.2.min(center.2 - r),
-            );
-            max = Vec3(
-                max.0.max(center.0 + r),
-                max.1.max(center.1 + r),
-                max.2.max(center.2 + r),
-            );
+    // Compute bounding box
+    let autofocus_rays = 5;
+    let mut distances = Vec::new();
+    for i in 0..autofocus_rays {
+        for j in 0..autofocus_rays {
+            let u = ((width / 2 + i - autofocus_rays / 2) as f32) / width as f32 * 2.0 - 1.0;
+            let v = ((height / 2 + j - autofocus_rays / 2) as f32) / height as f32 * 2.0 - 1.0;
+            let u = u * aspect * scale;
+            let v = -v * scale;
+
+            let ray_dir = Vec3(u, v, 1.0).normalize();
+            if let Some((t, n, _)) = intersect_closest(cam, ray_dir, &objects) {
+                let hit = cam.add(ray_dir.scale(t));
+                let focus_adjusted = hit.sub(n.scale(0.1)); // back off slightly from surface
+                distances.push(focus_adjusted.sub(cam).norm());
+            }
         }
     }
 
-
-    // Focus point = center of bbox
-    let center = Vec3(
-        (min.0 + max.0) * 0.5,
-        (min.1 + max.1) * 0.5,
-        (min.2 + max.2) * 0.5,
-    );
-    let focus = center.sub(cam).norm();
-    println!("Focus to bounding box center: {:.2}", focus);*/
-    
-    /*// Autofocus (adjust for surface offset)
-    let autofocus_dir = Vec3(0.0, 0.0, 1.0);
-    let focus = if let Some((t, n, _)) = objects.iter()
-        .filter_map(|o| intersect(o, cam, autofocus_dir))
-        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
-    {
-        let hit_point = cam.add(autofocus_dir.scale(t));
-        let padded = hit_point.add(n.scale(0.1)); // push focus behind surface
-        (padded.sub(cam)).norm()
+    let focus = if !distances.is_empty() {
+        distances.iter().sum::<f32>() / distances.len() as f32
     } else {
         5.0
     };
-    println!("Adjusted focus: {:.2}", focus);*/
-
-    /*let f_stop = 4.0; // adjust this like a real lens
-    let aperture = focus / (2.0 * f_stop);
-    println!("Adaptive aperture (f/{:.1}): {:.4}", f_stop, aperture);*/
+    println!("Autofocus: {:.2}", focus);
 
 
     let progress = Arc::new(ProgressBar::new(height as u64));
@@ -373,10 +466,13 @@ fn main() {
 
                     let rd0 = Vec3(u, v, 1.0).normalize();
                     let (dx, dy) = sample_disk(rng.r#gen::<f32>() * aperture);
-                    let origin = cam.add(right.scale(dx)).add(real_up.scale(dy)).add(rd0.scale(focus));
-                    let rd = origin.sub(cam).normalize();
 
-                    col = col.add(trace(origin, rd, &objects, &light, 0));
+                    let focal_pt = cam.add(rd0.scale(focus));      // where the sharp image lies
+                    let (dx, dy) = sample_disk(rng.r#gen::<f32>() * aperture);
+                    let origin   = cam.add(right.scale(dx)).add(real_up.scale(dy)); // on aperture
+                    let rd       = focal_pt.sub(origin).normalize();                // ← correct dir
+
+                    col = col.add(trace(origin, rd, &objects, &light, 0, 0));
 
                 }
             }
