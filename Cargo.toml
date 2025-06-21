@@ -1,0 +1,10 @@
+[package]
+name = "Raytracer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+image = "0.25.5"
+rand = "0.8"
+rayon = "1.10.0"
+indicatif = "0.17"
