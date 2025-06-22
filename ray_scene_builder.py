@@ -19,8 +19,8 @@ def vec(a)   :  return mu.Vector(a)
 
 def look_at_quat(direction:mu.Vector, up:mu.Vector):
     z = direction.normalized()
-    x = up.cross(z).normalized()
-    y = z.cross(x)
+    x = z.cross(up).normalized()
+    y = x.cross(z)
     return mu.Matrix((x, y, z)).transposed().to_quaternion()
 
 # ───────────────────────── material props ──────────────────
@@ -205,7 +205,7 @@ class RS_OT_import(Operator):
         cam.location = vec(cam_json.get("pos",[0,0,0]))
         look         = vec(cam_json.get("look_at",[0,0,1])) - cam.location
         up           = vec(cam_json.get("up",[0,1,0]))
-        cam.rotation_euler = look_at_quat(look, up).to_euler()
+        cam.rotation_euler = look_at_quat(-look, up).to_euler()
         cam.data.angle     = math.radians(cam_json.get("fov",60))
 
         self.report({'INFO'},"Scene imported")
