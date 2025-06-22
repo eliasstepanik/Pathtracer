@@ -25,7 +25,7 @@ const MAX_GLASS_BOUNCES: u32 = 8;
 
 fn main() {
     // ── parse JSON ────────────────────────────────────────────────────────
-    let scene = load("scene.example.json");
+    let scene = load("scene.json");
 
     let width     = scene.render.width;
     let height    = scene.render.height;
@@ -50,7 +50,44 @@ fn main() {
     let focus = renderer::autofocus(
         pos, aspect, scale, width, height, &scene.objects);
 
-    println!("Autofocus: {focus:.2}");
+
+    // ── dump debug info ────────────────────────────────────────────────────
+    println!("=== CAMERA INFO ===");
+    println!(" position : {:?}", pos);
+    println!(" look_at  : {:?}", look_at);
+    println!(" up       : {:?}", up_v);
+    println!(" fov (°)  : {:.2}", scene.camera.fov);
+    println!(" fov (rad): {:.4}", fov_rad);
+    println!(" aspect   : {:.4}", aspect);
+    println!(" scale    : {:.4}", scale);
+    println!(" forward  : {:?}", forward);
+    println!(" right    : {:?}", right);
+    println!(" real_up  : {:?}", real_up);
+    println!(" aperture : {:.4}", aperture);
+    println!(" autofocus: {:.4}", focus);
+
+    println!("\n=== OBJECTS ({}) ===", scene.objects.len());
+    for (i, obj) in scene.objects.iter().enumerate() {
+        match obj {
+            crate::object::Object::Sphere(s) => {
+                println!(" [{}] Sphere {{ center: {:?}, radius: {:.4} }}",
+                         i, s.center, s.radius);
+            }
+            crate::object::Object::Plane(p) => {
+                println!(" [{}] Plane  {{ point: {:?}, normal: {:?}, half_w: {:.4}, half_h: {:.4} }}",
+                         i, p.point, p.normal, p.half_w, p.half_h);
+            }
+        }
+    }
+
+    println!("\n=== LIGHTS ({}) ===", scene.lights.len());
+    for (i, l) in scene.lights.iter().enumerate() {
+        println!(" [{}] Light {{ pos: {:?}, u: {:?}, v: {:?}, intensity: {:?} }}",
+                 i, l.pos, l.u, l.v, l.intensity);
+    }
+
+
+
 
     // ── multithreaded render loop ─────────────────────────────────────────
     let bar = ProgressBar::new(height as u64);
@@ -60,6 +97,9 @@ fn main() {
     let objects = Arc::new(scene.objects);
     let lights  = Arc::new(scene.lights);
 
+    
+    
+    
     let mut img = RgbImage::new(width, height);
     let rows: Vec<_> = (0..height).into_par_iter().flat_map(|y| {
         bar.inc(1);
