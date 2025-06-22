@@ -1,5 +1,12 @@
 use crate::algebra::Vec3;
-pub fn reinhard(c:Vec3)->Vec3{ c.scale(1.0/(1.0+c.0)) }
+pub fn reinhard(c: Vec3) -> Vec3 {
+    // Perform the Reinhard operation on each component (R, G, B) independently.
+    Vec3(
+        c.0 / (1.0 + c.0),
+        c.1 / (1.0 + c.1),
+        c.2 / (1.0 + c.2),
+    )
+}
 
 #[inline]
 fn aces_film(c: Vec3) -> Vec3 {

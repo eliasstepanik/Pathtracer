@@ -10,6 +10,7 @@ impl Vec3 {
     pub fn add(self, v: Self) -> Self { Self(self.0+v.0, self.1+v.1, self.2+v.2) }
     pub fn sub(self, v: Self) -> Self { Self(self.0-v.0, self.1-v.1, self.2-v.2) }
     pub fn scale(self, f: f32) -> Self { Self(self.0*f, self.1*f, self.2*f) }
+    pub fn mul(self, v: Self) -> Self { Self(self.0*v.0, self.1*v.1, self.2*v.2) } // <--- ADDED
     pub fn dot(self, v: Self) -> f32 { self.0*v.0 + self.1*v.1 + self.2*v.2 }
     pub fn cross(self, v: Self) -> Self {
         Self(self.1*v.2-self.2*v.1, self.2*v.0-self.0*v.2, self.0*v.1-self.1*v.0)

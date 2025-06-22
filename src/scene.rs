@@ -27,6 +27,7 @@ enum ObjectJson {
 }
 #[derive(Deserialize)]
 pub struct SphereDesc {
+    pub name:   String,
     #[serde(deserialize_with = "vec3_from_array")]
     pub center: Vec3,
     pub radius: f32,
@@ -34,12 +35,15 @@ pub struct SphereDesc {
 }
 #[derive(Deserialize)]
 pub struct PlaneDesc {
+    pub name:   String,
     #[serde(deserialize_with = "vec3_from_array")]
     pub point : Vec3,
+    // REMOVED: normal and size
+    // ADDED: u and v vectors
     #[serde(deserialize_with = "vec3_from_array")]
-    pub normal: Vec3,
-    #[serde(default)]                    // <— allow missing field
-    pub size  : Option<[f32; 2]>,        // width , height
+    pub u:      Vec3,
+    #[serde(deserialize_with = "vec3_from_array")]
+    pub v:      Vec3,
     pub mat   : String,
 }
 
@@ -77,38 +81,56 @@ pub struct Scene {
 pub fn load(path:&str) -> Scene {
     let data = std::fs::read_to_string(path).expect("scene file");
     let file : SceneFile = serde_json::from_str(&data).expect("json parse");
+    
+    
 
-    let mat_of = |name:&str| -> Material {
-        let m = file.materials.get(name).unwrap_or_else(||panic!("no material {}",name));
-        Material{
-            color:Vec3(m.rgb[0],m.rgb[1],m.rgb[2]),
-            metallic:m.metallic, roughness:m.roughness, ior:m.ior }
-    };
+    // 1. Create a library of materials from the JSON
+    let materials: HashMap<String, Material> = file.materials.into_iter().map(|(name, m)| {
+        let mat = Material {
+            color: Vec3(m.rgb[0], m.rgb[1], m.rgb[2]),
+            metallic: m.metallic,
+            roughness: m.roughness,
+            ior: m.ior
+        };
+        (name, mat)
+    }).collect();
 
+    let default_mat = Material { color: Vec3(1.0, 0.0, 1.0), metallic: 0.0, roughness: 1.0, ior: 1.0 };
+
+
+    // 2. Create objects and assign materials from the library by name
     let mut objects = Vec::new();
     for o in file.objects {
         match o {
-            ObjectJson::Sphere { sphere } => objects.push(Object::Sphere(Sphere {
-                center:   sphere.center,
-                radius:   sphere.radius,
-                material: mat_of(&sphere.mat),
-            })),
+            ObjectJson::Sphere { sphere } => {
+                let material = materials.get(&sphere.mat).unwrap_or(&default_mat).clone();
+                objects.push(Object::Sphere(Sphere {
+                    name:     sphere.name,
+                    center:   sphere.center,
+                    radius:   sphere.radius,
+                    material,
+                }));
+            },
             ObjectJson::Plane { plane } => {
-                let [w, h] = plane.size.unwrap_or([f32::INFINITY, f32::INFINITY]);
+                let material = materials.get(&plane.mat).unwrap_or(&default_mat).clone();
+                // If the plane is a perfect rectangle, u and v are orthogonal.
+                // The normal can be derived from their cross product.
+                let normal = plane.u.cross(plane.v).normalize();
+
                 objects.push(Object::Plane(Plane {
-                    point   : plane.point,
-                    normal  : plane.normal.normalize(),
-                    half_w  : w * 0.5,
-                    half_h  : h * 0.5,
-                    material: mat_of(&plane.mat),
+                    name:     plane.name,
+                    point:    plane.point,
+                    u:        plane.u,
+                    v:        plane.v,
+                    normal, // Store the derived normal
+                    material,
                 }));
             }
         }
     }
 
-
     let lights = file.lights.iter().map(|l| Light{
-        pos:l.pos.into(), u:l.u.into(), v:l.v.into(), intensity:l.intensity.into()
+        pos:l.pos, u:l.u, v:l.v, intensity:l.intensity
     }).collect();
 
     Scene{ camera:file.camera, render:file.render, objects, lights }
