@@ -8,6 +8,7 @@ mod tonemap;
 mod renderer;
 mod plane;
 mod sphere;
+mod gpu_types;
 
 use crate::{
     renderer::render_image_name,
@@ -37,8 +38,8 @@ fn main() {
     let aspect = width as f32 / height as f32;
     let scale  = (fov_rad * 0.5).tan();
     let pos    = scene.camera.pos;
-    let mut look_at= scene.camera.look_at;
-    
+    let look_at= scene.camera.look_at;
+
     let up_v   = scene.camera.up;
 
     let forward = look_at.sub(pos).normalize();
@@ -47,8 +48,10 @@ fn main() {
     let real_up = forward.cross(right).normalize();
 
     // autofocus
+    // --- MODIFIED: Pass the full camera basis to autofocus ---
     let focus = renderer::autofocus(
-        pos, aspect, scale, width, height, &scene.objects);
+        pos, right, real_up, forward,
+        aspect, scale, width, height, &scene.objects);
 
 
     // ── dump debug info ────────────────────────────────────────────────────
@@ -70,12 +73,12 @@ fn main() {
     for (i, obj) in scene.objects.iter().enumerate() {
         match obj {
             crate::object::Object::Sphere(s) => {
-                println!(" [{}] Sphere {{ center: {:?}, radius: {:.4} }}",
-                         i, s.center, s.radius);
+                println!(" [{}] Sphere '{}' {{ center: {:?}, radius: {:.4}, mat_color: {:?} }}",
+                         i, s.name, s.center, s.radius, s.material.color);
             }
             crate::object::Object::Plane(p) => {
-                println!(" [{}] Plane  {{ point: {:?}, normal: {:?}, half_w: {:.4}, half_h: {:.4} }}",
-                         i, p.point, p.normal, p.half_w, p.half_h);
+                println!(" [{}] Plane '{}' {{ point: {:?}, normal: {:?}, mat_color: {:?} }}",
+                         i, p.name, p.point, p.normal, p.material.color);
             }
         }
     }
@@ -97,9 +100,9 @@ fn main() {
     let objects = Arc::new(scene.objects);
     let lights  = Arc::new(scene.lights);
 
-    
-    
-    
+
+
+
     let mut img = RgbImage::new(width, height);
     let rows: Vec<_> = (0..height).into_par_iter().flat_map(|y| {
         bar.inc(1);
@@ -107,9 +110,10 @@ fn main() {
         let mut row = Vec::with_capacity(width as usize);
 
         for x in 0..width {
+            // --- MODIFIED: Pass the `forward` vector to pixel_color ---
             let col = renderer::pixel_color(
                 x, y, width, height, samples, aspect, scale,
-                pos, right, real_up, focus, aperture,
+                pos, right, real_up, forward, focus, aperture,
                 &objects, &lights, &mut rng);
             row.push(((x, y), col));
         }

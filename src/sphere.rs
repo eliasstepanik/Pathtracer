@@ -4,8 +4,9 @@
 
 use crate::{algebra::Vec3, material::Material};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)] // MODIFIED: Removed Copy trait
 pub struct Sphere {
+    pub name     : String, // ADDED
     pub center   : Vec3,
     pub radius   : f32,
     pub material : Material,
