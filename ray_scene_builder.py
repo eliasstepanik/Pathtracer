@@ -15,15 +15,15 @@ from bpy.types  import Operator, Panel, PropertyGroup
 
 # ───────────────────────── helpers ─────────────────────────
 def to_list(v: mu.Vector) -> list[float]:
-    """Blender Vec → tracer JSON (X right, Y up, Z forward)."""
-    # Swap Blender's Y and Z axes so Z becomes forward and Y becomes up.
-    # This matches the tracer's coordinate system without changing
-    # handedness because X is unchanged.
-    return [v.x, v.z, v.y]
+    """Rotate Blender's Z-up vector into the tracer's Y-up space."""
+    # Rotate around X so Blender Z (up) becomes tracer Y (up) while
+    # preserving a right handed basis. Simply swapping Y and Z would flip
+    # the coordinate system handedness which leads to inverted normals.
+    return [v.x, v.z, -v.y]
 
 def from_list(a: list[float]) -> mu.Vector:
     """Inverse of :func:`to_list` for converting back to Blender."""
-    return mu.Vector((a[0], a[2], a[1]))
+    return mu.Vector((a[0], -a[2], a[1]))
 
 def look_at_quat(direction: mu.Vector, up: mu.Vector) -> mu.Quaternion:
     """Return quaternion that points +Z (Blender forward) into `direction`."""
@@ -131,10 +131,10 @@ class RS_OT_export(Operator):
         cam = scn.camera
         if cam is None:
             self.report({'ERROR'},"No active camera"); return {'CANCELLED'}
-        # Camera orientation: Blender's local +Y axis is forward for export
-        # (after swapping Y/Z). Obtain both vectors in world space and convert
-        # them with :func:`to_list`.
-        forward = cam.matrix_world.to_3x3() @ mu.Vector((0, 1, 0))
+        # Camera orientation: local -Z points along the viewing direction and
+        # +Y is the camera's up axis in Blender. Convert both vectors so the
+        # tracer receives a proper look-at and up description.
+        forward = cam.matrix_world.to_3x3() @ mu.Vector((0, 0, -1))
         cam_json = {
             "pos"     : to_list(cam.location),
             "look_at" : to_list(cam.location + forward),
