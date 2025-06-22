@@ -183,10 +183,15 @@ class RS_OT_import(Operator):
         if cam_ob.name not in scn.objects:
             scn.collection.objects.link(cam_ob)
             scn.camera = cam_ob
-        cam_ob.location = vec(cam_json.get("pos",[0,0,0]))
-        look = vec(cam_json.get("look_at",[0,0,1]))
-        up   = vec(cam_json.get("up",[0,1,0]))
-        cam_ob.rotation_euler = look_at_quat(look-cam_ob.location, up).to_euler()
+        cam_ob.location = vec(cam_json.get("pos", [0, 0, 0]))
+        look = vec(cam_json.get("look_at", [0, 0, 1]))
+        up   = vec(cam_json.get("up", [0, 1, 0]))
+
+        # look_at is exported as a point one unit in front of the camera
+        # along its viewing direction. When computing the orientation we need
+        # the vector pointing from that target back to the camera so that the
+        # resulting quaternion matches the original camera rotation.
+        cam_ob.rotation_euler = look_at_quat(cam_ob.location - look, up).to_euler()
         cam_ob.data.angle = math.radians(cam_json.get("fov",60))
 
         self.report({'INFO'},"Scene imported")

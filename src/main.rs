@@ -401,9 +401,9 @@ fn main() {
     let aspect=width as f32 / height as f32;
     let scale=(fov*0.5).tan();
 
-    let cam      = cam_json.pos.into();
-    let look_at  = cam_json.look_at.into();
-    let up       = cam_json.up.into();
+    let cam: Vec3     = cam_json.pos.into();
+    let look_at: Vec3 = cam_json.look_at.into();
+    let up: Vec3      = cam_json.up.into();
 
     let forward  = look_at.sub(cam).normalize();
     let right    = forward.cross(up).normalize();
