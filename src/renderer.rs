@@ -177,12 +177,16 @@ pub fn trace(
 }
 
 
-fn intersect_closest(ro: Vec3, rd: Vec3, objs: &[Object])
-                     -> Option<(f32, Vec3, Material)>
-{
+
+fn intersect_closest(
+    ro: Vec3,
+    rd: Vec3,
+    objs: &[Object],
+) -> Option<(f32, Vec3, Material)> {
     objs.iter()
         .filter_map(|o| o.hit(ro, rd))
-        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+        .filter(|h| h.0.is_finite())
+        .min_by(|a, b| a.0.total_cmp(&b.0))
 }
 
 /// Snell refraction

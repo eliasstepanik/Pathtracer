@@ -44,7 +44,8 @@ where
     D: serde::Deserializer<'de>,
 {
     let arr = <[f32; 3]>::deserialize(d)?;
-    Ok(arr.into())
+    // we wrote [x, z, y] in the JSON; swap back to Vec3(x, y, z)
+    Ok(Vec3(arr[0], arr[2], arr[1]))
 }
 
 
