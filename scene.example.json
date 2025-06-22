@@ -1,0 +1,35 @@
+{
+  "camera": {
+    "pos"     : [0, 0, 0],
+    "look_at" : [0, 0, 4],
+    "up"      : [0, 1, 0],
+    "fov"     : 60,
+    "aperture": 0.02
+  },
+
+  "render": { "width": 800, "height": 600, "samples": 64 },
+
+  "materials": {
+    "white" : { "rgb":[1,1,1], "metallic":0,   "roughness":1,    "ior":0   },
+    "red"   : { "rgb":[1,0,0], "metallic":0,   "roughness":1,    "ior":0   },
+    "green" : { "rgb":[0,1,0], "metallic":0,   "roughness":1,    "ior":0   },
+    "mirror": { "rgb":[1,1,1], "metallic":2,   "roughness":0.2,  "ior":0   },
+    "glass" : { "rgb":[1,1,1], "metallic":0,   "roughness":0.01, "ior":1.8 }
+  },
+
+  "objects": [
+    { "plane": { "point":[ 0,-1,0], "normal":[ 0, 1, 0], "size":[ 6, 6], "mat":"white" } },
+    { "plane": { "point":[ 0, 3,0], "normal":[ 0,-1, 0], "size":[ 6, 6], "mat":"white" } },
+    { "plane": { "point":[ 0, 0,8], "normal":[ 0, 0,-1], "size":[ 6, 6], "mat":"white" } },
+    { "plane": { "point":[-3, 0,0], "normal":[ 1, 0, 0], "size":[ 6, 6], "mat":"red"   } },
+    { "plane": { "point":[ 3, 0,0], "normal":[-1, 0, 0], "size":[ 6, 6], "mat":"green" } },
+
+    { "sphere": { "center":[-0.8,-0.2, 4.0], "radius":0.9 , "mat":"mirror" } },
+    { "sphere": { "center":[ 1.0,-0.3, 4.2], "radius":0.9 , "mat":"mirror" } },
+    { "sphere": { "center":[ 0.0,-0.5, 2.5], "radius":0.35, "mat":"glass"  } }
+  ],
+
+  "lights": [
+    { "pos":[0,2.95,4], "u":[1,0,0], "v":[0,0,1], "intensity":[25,25,25] }
+  ]
+}
