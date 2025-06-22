@@ -182,7 +182,10 @@ fn intersect_closest(ro: Vec3, rd: Vec3, objs: &[Object])
 {
     objs.iter()
         .filter_map(|o| o.hit(ro, rd))
-        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+        // `partial_cmp` may return `None` for NaN values which causes a panic
+        // when unwrapped. `total_cmp` provides a total ordering for `f32` and
+        // therefore guarantees an `Ordering` even in presence of NaN.
+        .min_by(|a, b| a.0.total_cmp(&b.0))
 }
 
 /// Snell refraction
