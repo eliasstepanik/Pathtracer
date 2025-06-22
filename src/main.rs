@@ -8,7 +8,6 @@ mod tonemap;
 mod renderer;
 mod plane;
 mod sphere;
-mod gpu_types;
 
 use crate::{
     renderer::render_image_name,
