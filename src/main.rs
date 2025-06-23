@@ -9,6 +9,7 @@ mod renderer;
 mod plane;
 mod sphere;
 
+use std::env;
 use crate::{
     renderer::render_image_name,
     algebra::{sample_disk, Vec3},
@@ -24,6 +25,10 @@ const MAX_DEPTH: u32 = 12;
 const MAX_GLASS_BOUNCES: u32 = 8;
 
 fn main() {
+    // Check for a "--quiet" or "-q" command-line argument
+    let args: Vec<String> = env::args().collect();
+    let quiet_mode = args.contains(&"--quiet".to_string()) || args.contains(&"-q".to_string());
+    
     // ── parse JSON ────────────────────────────────────────────────────────
     let scene = load("scene.json");
 
@@ -91,25 +96,33 @@ fn main() {
 
 
 
+
     // ── multithreaded render loop ─────────────────────────────────────────
-    let bar = ProgressBar::new(height as u64);
-    bar.set_style(ProgressStyle::default_bar()
-        .template("{bar:40.cyan/blue} {pos}/{len} rows").unwrap());
+    let bar = if !quiet_mode {
+        let pb = ProgressBar::new(height as u64);
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{bar:40.cyan/blue} {pos}/{len} rows").unwrap());
+        Some(pb)
+    } else {
+        println!("\nRendering {}x{} image with {} samples... (quiet mode)", width, height, samples);
+        None
+    };
+
 
     let objects = Arc::new(scene.objects);
     let lights  = Arc::new(scene.lights);
 
-
-
-
     let mut img = RgbImage::new(width, height);
     let rows: Vec<_> = (0..height).into_par_iter().flat_map(|y| {
-        bar.inc(1);
+        // --- MODIFIED: Only increment the bar if it exists ---
+        if let Some(b) = &bar {
+            b.inc(1);
+        }
+
         let mut rng = thread_rng();
         let mut row = Vec::with_capacity(width as usize);
 
         for x in 0..width {
-            // --- MODIFIED: Pass the `forward` vector to pixel_color ---
             let col = renderer::pixel_color(
                 x, y, width, height, samples, aspect, scale,
                 pos, right, real_up, forward, focus, aperture,
@@ -119,7 +132,9 @@ fn main() {
         row
     }).collect();
 
-    bar.finish_with_message("Rendering complete");
+    if let Some(b) = bar {
+        b.finish_with_message("Rendering complete");
+    }
 
     for ((x, y), rgb) in rows { img.put_pixel(x, y, Rgb(rgb)); }
     let name = render_image_name(width, height, samples, aperture, focus);

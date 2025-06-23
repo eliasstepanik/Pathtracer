@@ -3,7 +3,7 @@ rem combine_all.bat – merge every *.rs, *.toml, *.py in this tree
 setlocal enabledelayedexpansion
 
 rem -------- output --------
-set "OUT=target/combined.all.txt"
+set "OUT=combined.all.txt"
 
 if exist "%OUT%" del "%OUT%"
 if not exist "target" mkdir "target"

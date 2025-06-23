@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  # Define a service named 'tracer'.
+  tracer:
+    # Build the image from the Dockerfile in the current directory ('.').
+    build: .
+    # Name the image that gets built.
+    image: saile2204/tracer:latest
+    
+    # Allocate a pseudo-TTY so the progress bar renders correctly.
+    tty: true
+
+    # Mount volumes to link host files/folders to container files/folders.
+    volumes:
+      # NEW: Mount the scene.json file from the host into the container.
+      # This allows you to edit scene.json locally and have the container
+      # use the updated version on the next run without a rebuild.
+      - ./scene.json:/home/appuser/app/scene.json
+
+      # Mount the output directory so renders are saved to your local machine.
+      - ./renders:/home/appuser/app/renders
+
+    # Optional: If you want the container to run in quiet mode by default,
+    # you can uncomment the following line.
+    # command: ["--quiet"]

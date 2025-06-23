@@ -81,8 +81,8 @@ pub struct Scene {
 pub fn load(path:&str) -> Scene {
     let data = std::fs::read_to_string(path).expect("scene file");
     let file : SceneFile = serde_json::from_str(&data).expect("json parse");
-    
-    
+
+
 
     // 1. Create a library of materials from the JSON
     let materials: HashMap<String, Material> = file.materials.into_iter().map(|(name, m)| {

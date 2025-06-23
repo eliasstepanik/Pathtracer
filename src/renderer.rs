@@ -21,21 +21,22 @@ fn lighting(
     objects: &[Object],
     lights : &[Light],
 ) -> Vec3 {
+    // A single accumulator for all direct light
     let mut total_direct_light = Vec3(0.0, 0.0, 0.0);
 
     for light in lights {
         let mut light_contrib = Vec3(0.0, 0.0, 0.0);
-        let samples = 8;
+        let samples = 8; // samples per light
 
         for _ in 0..samples {
             // Jitter a point on the emitter rectangle
-            let mut rng = rand::thread_rng();
-            let lp = light.pos
+            let mut rng   = rand::thread_rng();
+            let lp        = light.pos
                 .add(light.u.scale(rng.r#gen::<f32>() - 0.5))
                 .add(light.v.scale(rng.r#gen::<f32>() - 0.5));
-            let lvec = lp.sub(hit);
-            let dist2 = lvec.dot(lvec);
-            let l = lvec.normalize();
+            let lvec      = lp.sub(hit);
+            let dist2     = lvec.dot(lvec);
+            let l         = lvec.normalize();
 
             // Visibility (shadow) test
             let shadow_ro = hit.add(n.scale(1e-4));
@@ -46,38 +47,47 @@ fn lighting(
 
             let n_dot_l = n.dot(l).max(0.0);
             if n_dot_l > 0.0 {
+                // --- Start of Corrected PBR Logic ---
                 let h = v.add(l).normalize();
 
-                // --- Start of Correct Cook-Torrance BRDF ---
+                // Pre-calculate dot products
                 let n_dot_v = n.dot(v).max(1e-4);
                 let n_dot_h = n.dot(h).max(0.0);
                 let v_dot_h = v.dot(h).max(0.0);
 
-                // Fresnel
+                // F (Fresnel)
                 let f0 = Vec3(0.04, 0.04, 0.04).scale(1.0 - mat.metallic)
                     .add(mat.color.scale(mat.metallic));
                 let f = fresnel_schlick(v_dot_h, f0);
 
-                // Specular BRDF part
+                // D (Normal Distribution)
                 let d = d_term(n_dot_h, mat.roughness);
+
+                // G (Geometry)
                 let g = g_term(n_dot_v, n_dot_l, mat.roughness);
+
+                // Specular BRDF
                 let spec_numerator = f.scale(d * g);
-                let spec_denominator = 4.0 * n_dot_v * n_dot_l + 1e-6; // add epsilon to avoid division by zero
-                let specular = spec_numerator.scale(1.0 / spec_denominator);
+                let spec_denominator = 4.0 * n_dot_v * n_dot_l;
+                let specular_brdf = spec_numerator.scale(1.0 / (spec_denominator + 1e-6));
 
-                // Diffuse BRDF part (with energy conservation)
-                let diffuse_albedo = mat.color.scale(1.0 - mat.metallic);
-                let kd = Vec3(1.0, 1.0, 1.0).sub(f); // The portion of light that is not specularly reflected
-                let diffuse = diffuse_albedo.mul(kd).scale(1.0 / PI);
+                // Diffuse BRDF (with energy conservation)
+                // Diffuse color is black for metals
+                let diffuse_color = mat.color.scale(1.0 - mat.metallic);
+                // Energy available for diffuse is (1 - F)
+                let k_d = Vec3(1.0, 1.0, 1.0).sub(f);
+                let diffuse_brdf = diffuse_color.mul(k_d).scale(1.0 / PI);
 
-                // Add contribution for this sample, scaled by cosine term
-                light_contrib = light_contrib.add((diffuse.add(specular)).scale(n_dot_l));
+                // Final radiance for this sample
+                let radiance = (diffuse_brdf.add(specular_brdf)).scale(n_dot_l);
+                light_contrib = light_contrib.add(radiance);
+                // --- End of Corrected PBR Logic ---
             }
         }
-
-        // Final light contribution is scaled by light's intensity (all channels) and sample count
-        let avg_light_contrib = light_contrib.scale(1.0 / samples as f32);
-        total_direct_light = total_direct_light.add(avg_light_contrib.mul(light.intensity));
+        // Scale by light power and divide by sample count
+        // Note: Using the Vec3 intensity directly, not just the red component.
+        let light_power = light.intensity.scale(1.0 / samples as f32);
+        total_direct_light = total_direct_light.add(light_contrib.mul(light_power));
     }
 
     total_direct_light
