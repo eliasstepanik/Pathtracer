@@ -2,6 +2,7 @@
 //! -------------
 //! Simple UV-sphere with constant radius.
 
+use std::ops::{Add, Sub};
 use crate::{algebra::Vec3, material::Material};
 
 #[derive(Clone, Debug)] // MODIFIED: Removed Copy trait

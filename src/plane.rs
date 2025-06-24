@@ -1,3 +1,4 @@
+use std::ops::{Add, Neg, Sub};
 use crate::algebra::Vec3;
 use crate::material::Material;
 

@@ -15,7 +15,7 @@ USER appuser
 WORKDIR /home/appuser/app
 
 COPY --from=builder /app/target/release/Raytracer .
-COPY scene.json .
+#COPY scene.json .
 RUN mkdir renders
 
 # Use ENTRYPOINT to define the main executable.

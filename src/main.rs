@@ -25,10 +25,9 @@ const MAX_DEPTH: u32 = 12;
 const MAX_GLASS_BOUNCES: u32 = 8;
 
 fn main() {
-    // Check for a "--quiet" or "-q" command-line argument
     let args: Vec<String> = env::args().collect();
     let quiet_mode = args.contains(&"--quiet".to_string()) || args.contains(&"-q".to_string());
-    
+
     // ── parse JSON ────────────────────────────────────────────────────────
     let scene = load("scene.json");
 
@@ -43,16 +42,12 @@ fn main() {
     let scale  = (fov_rad * 0.5).tan();
     let pos    = scene.camera.pos;
     let look_at= scene.camera.look_at;
-
     let up_v   = scene.camera.up;
-
-    let forward = look_at.sub(pos).normalize();
-    // Right = Up  × Forward   (right-handed basis)
+    let forward = (look_at - pos).normalize();
     let right   = up_v.cross(forward).normalize();
     let real_up = forward.cross(right).normalize();
 
     // autofocus
-    // --- MODIFIED: Pass the full camera basis to autofocus ---
     let focus = renderer::autofocus(
         pos, right, real_up, forward,
         aspect, scale, width, height, &scene.objects);
@@ -64,12 +59,7 @@ fn main() {
     println!(" look_at  : {:?}", look_at);
     println!(" up       : {:?}", up_v);
     println!(" fov (°)  : {:.2}", scene.camera.fov);
-    println!(" fov (rad): {:.4}", fov_rad);
     println!(" aspect   : {:.4}", aspect);
-    println!(" scale    : {:.4}", scale);
-    println!(" forward  : {:?}", forward);
-    println!(" right    : {:?}", right);
-    println!(" real_up  : {:?}", real_up);
     println!(" aperture : {:.4}", aperture);
     println!(" autofocus: {:.4}", focus);
 
@@ -93,15 +83,11 @@ fn main() {
                  i, l.pos, l.u, l.v, l.intensity);
     }
 
-
-
-
-
     // ── multithreaded render loop ─────────────────────────────────────────
     let bar = if !quiet_mode {
         let pb = ProgressBar::new(height as u64);
         pb.set_style(ProgressStyle::default_bar()
-            .template("{bar:40.cyan/blue} {pos}/{len} rows").unwrap());
+            .template("{bar:40.cyan/blue} {pos}/{len} rows | {elapsed_precise} | ETA: {eta}").unwrap());
         Some(pb)
     } else {
         println!("\nRendering {}x{} image with {} samples... (quiet mode)", width, height, samples);
@@ -114,7 +100,6 @@ fn main() {
 
     let mut img = RgbImage::new(width, height);
     let rows: Vec<_> = (0..height).into_par_iter().flat_map(|y| {
-        // --- MODIFIED: Only increment the bar if it exists ---
         if let Some(b) = &bar {
             b.inc(1);
         }
@@ -123,6 +108,8 @@ fn main() {
         let mut row = Vec::with_capacity(width as usize);
 
         for x in 0..width {
+            // --- THIS IS THE CORRECTED FUNCTION CALL ---
+            // It matches the latest signature of pixel_color in renderer.rs
             let col = renderer::pixel_color(
                 x, y, width, height, samples, aspect, scale,
                 pos, right, real_up, forward, focus, aperture,

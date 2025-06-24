@@ -6,4 +6,6 @@ pub struct Material {
     pub metallic: f32,
     pub roughness: f32,
     pub ior: f32,
+    pub volume_density: f32,
+    pub volume_anisotropy: f32,
 }

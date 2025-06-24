@@ -1,273 +1,384 @@
 bl_info = {
-    "name"       : "Rust-Ray Scene Builder",
-    "author"     : "Elias Stepanik",
-    "description": "Build / import scenes for the Rust path-tracer",
-    "version"    : (1, 4, 0),
-    "blender"    : (4, 4, 3),
-    "location"   : "3D-View ▸ Sidebar ▸ Ray Scene",
-    "category"   : "Import-Export",
+    "name": "Rust Pathtracer Scene Builder",
+    "author": "Elias Stepanik (Rewritten by AI)",
+    "description": "A robust tool to create, import, and export scenes for the Rust pathtracer.",
+    "version": (3, 0, 3), # Definitive fix for scene clearing bug
+    "blender": (4, 1, 0),
+    "location": "3D View > Sidebar > Ray Scene",
+    "category": "Import-Export",
+    "doc_url": "https://github.com/elias-stepanik/pathtracer",
 }
 
-import bpy, json, math, mathutils as mu
+import bpy
+import json
+import math
+import mathutils as mu
 from pathlib import Path
-from bpy.props import FloatProperty, FloatVectorProperty, IntProperty, StringProperty, PointerProperty, EnumProperty
-from bpy.types  import Operator, Panel, PropertyGroup
+from bpy.props import (FloatProperty, IntProperty, StringProperty,
+                       PointerProperty)
+from bpy.types import Operator, Panel, PropertyGroup, Context, Material, Scene
 
-# ───────────────────────── helpers ─────────────────────────
-def to_list(v: mu.Vector) -> list[float]:
-    return [v.x, v.z, -v.y]
 
-def from_list(a: list[float]) -> mu.Vector:
-    return mu.Vector((a[0], -a[2], a[1]))
+# ───────────────────────── CORE TRANSFORMATION LOGIC ──────────────────────────
 
-EPS = 1e-6
-WORLD_X = mu.Vector((1, 0, 0))
-WORLD_Y = mu.Vector((0, 1, 0))
-def look_at_quat(direction: mu.Vector, up: mu.Vector = WORLD_Y) -> mu.Quaternion:
-    z = direction.normalized()
-    if abs(z.dot(up)) > 1.0 - EPS:
-        up = WORLD_X if abs(z.dot(WORLD_X)) < 1.0 - EPS else WORLD_Y
-    x = up.cross(z).normalized()
-    y = z.cross(x)
-    return mu.Matrix((x, y, z)).transposed().to_quaternion()
+# This matrix is the key to the entire export process. It performs the
+# fundamental coordinate system swap from Blender's Z-Up to the Pathtracer's Y-Up.
+# Blender (X, Y, Z) -> Pathtracer (X, Z, -Y)
+CONVERSION_MATRIX_BLENDER_TO_PATHTRACER = mu.Matrix((
+    (1, 0, 0, 0),
+    (0, 0, 1, 0),
+    (0, -1, 0, 0),
+    (0, 0, 0, 1)
+))
 
-# ───────────────────────── material props ──────────────────
-# MODIFIED: These properties are now on bpy.types.Material
-class RS_MatProps(PropertyGroup):
-    metallic  : FloatProperty(name="Metallic" , min=0, max=2, default=0)
-    roughness : FloatProperty(name="Roughness", min=0, max=1, default=1)
-    ior       : FloatProperty(name="IOR"      , min=0, max=3, default=1.0) # Default to 1.0 (air)
+# Custom property key used to identify objects managed by this addon
+PATHTRACER_OBJECT_ID_KEY = "rs_type"
 
-# ───────────────────────── scene-level props ───────────────
-class RS_SceneProps(PropertyGroup):
-    aperture : FloatProperty(name="Aperture", min=0, max=1, default=0.02, precision=3)
-    samples  : IntProperty  (name="Samples" , min=1, max=65536, default=64)
+def vector_to_list(vector: mu.Vector) -> list[float]:
+    """A simple utility to convert a mathutils Vector to a basic list."""
+    return [vector.x, vector.y, vector.z]
 
-# ───────────────────────── add primitives ──────────────────
-class RS_OT_add_plane(Operator):
-    bl_idname = "rs.add_plane"; bl_label = "Add Plane"
-    bl_options = {'REGISTER','UNDO'}
-    def execute(self, ctx):
-        bpy.ops.mesh.primitive_plane_add(size=2)
-        ctx.active_object["rs_type"] = "plane"
+
+def create_look_at_quaternion(direction: mu.Vector, up: mu.Vector = mu.Vector((0, 1, 0))) -> mu.Quaternion:
+    """Creates a quaternion that orients an object to look in a specific direction."""
+    z_axis = -direction.normalized()
+    if abs(z_axis.dot(up)) > 0.99999:
+        up = mu.Vector((1, 0, 0)) if abs(z_axis.x) < 0.99999 else mu.Vector((0, 1, 0))
+
+    x_axis = up.cross(z_axis).normalized()
+    y_axis = z_axis.cross(x_axis).normalized()
+    return mu.Matrix((x_axis, y_axis, z_axis)).transposed().to_quaternion()
+
+
+# ───────────────────────── PROPERTY DEFINITIONS ──────────────────────────
+
+class PathtracerMaterialProperties(PropertyGroup):
+    metallic: FloatProperty(name="Metallic", min=0, max=1, default=0)
+    roughness: FloatProperty(name="Roughness", min=0.01, max=1, default=0.5)
+    ior: FloatProperty(name="Index of Refraction", min=1, max=3, default=1.5)
+    volume_density: FloatProperty(name="Volume Density", min=0, max=10, default=0)
+    volume_anisotropy: FloatProperty(name="Volume Anisotropy", min=-1, max=1, default=0)
+
+
+class PathtracerSceneProperties(PropertyGroup):
+    samples: IntProperty(name="Samples", min=1, max=65536, default=128)
+    aperture: FloatProperty(name="Aperture", min=0, max=1, default=0.01, precision=4)
+
+
+# ───────────────────────── PRIMITIVE CREATION OPERATORS ────────────────────────────
+
+class RS_OT_AddPlane(Operator):
+    bl_idname = "rs.add_plane"; bl_label = "Add Pathtracer Plane"; bl_options = {'REGISTER', 'UNDO'}
+    def execute(self, context: Context):
+        bpy.ops.mesh.primitive_plane_add(size=2, location=context.scene.cursor.location)
+        context.active_object[PATHTRACER_OBJECT_ID_KEY] = "plane"
         return {'FINISHED'}
 
-class RS_OT_add_sphere(Operator):
-    bl_idname = "rs.add_sphere"; bl_label = "Add Sphere"
-    bl_options = {'REGISTER','UNDO'}
-    def execute(self, ctx):
-        bpy.ops.mesh.primitive_uv_sphere_add(radius=1)
-        ctx.active_object["rs_type"] = "sphere"
+
+class RS_OT_AddSphere(Operator):
+    bl_idname = "rs.add_sphere"; bl_label = "Add Pathtracer Sphere"; bl_options = {'REGISTER', 'UNDO'}
+    def execute(self, context: Context):
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=1, location=context.scene.cursor.location)
+        context.active_object[PATHTRACER_OBJECT_ID_KEY] = "sphere"
         return {'FINISHED'}
 
-class RS_OT_add_light(Operator):
-    bl_idname = "rs.add_light"; bl_label = "Add Light"
-    bl_options = {'REGISTER','UNDO'}
-    size_x : FloatProperty(name="Width",  default=2, min=0.01)
-    size_y : FloatProperty(name="Height", default=2, min=0.01)
-    energy : FloatProperty(name="Intensity", default=25, min=0)
-    def execute(self, ctx):
-        data = bpy.data.lights.new("RS_Light","AREA")
-        data.shape, data.size, data.size_y, data.energy = 'RECTANGLE', self.size_x, self.size_y, self.energy
-        ob = bpy.data.objects.new("RS_Light", data)
-        ctx.collection.objects.link(ob)
+
+class RS_OT_AddLight(Operator):
+    bl_idname = "rs.add_light"; bl_label = "Add Pathtracer Light"; bl_options = {'REGISTER', 'UNDO'}
+    size_x: FloatProperty(name="Width", default=2, min=0.01)
+    size_y: FloatProperty(name="Height", default=2, min=0.01)
+    energy: FloatProperty(name="Intensity", default=50, min=0)
+    def execute(self, context: Context):
+        bpy.ops.object.light_add(type='AREA', location=context.scene.cursor.location)
+        light_object = context.active_object
+        blender_light_data = light_object.data
+        blender_light_data.shape = 'RECTANGLE'
+        blender_light_data.size = self.size_x
+        blender_light_data.size_y = self.size_y
+        blender_light_data.energy = self.energy
+        light_object.name = "RS_AreaLight"
         return {'FINISHED'}
 
-# ───────────────────────── EXPORT ──────────────────────────
-class RS_OT_export(Operator):
-    bl_idname = "rs.export_scene"; bl_label = "Export scene.json"
-    filepath : StringProperty(subtype='FILE_PATH', default="scene.json")
 
-    def execute(self, ctx):
-        scn = ctx.scene
-        mats, objs, lights, used_mats = {}, [], [], set()
+# ───────────────────────── SCENE EXPORT OPERATOR ──────────────────────────────────
 
-        # --- MODIFIED: Gather used materials first ---
-        for ob in scn.objects:
-            if "rs_type" in ob and ob.active_material:
-                used_mats.add(ob.active_material)
+class RS_OT_ExportScene(Operator):
+    bl_idname = "rs.export_scene"; bl_label = "Export to scene.json"
+    filepath: StringProperty(subtype='FILE_PATH', default="scene.json")
 
-        for mat in used_mats:
-            mats[mat.name] = {
-                "rgb": list(mat.diffuse_color)[:3],
-                "metallic": mat.rs_props.metallic,
-                "roughness": mat.rs_props.roughness,
-                "ior": mat.rs_props.ior
+    def execute(self, context: Context) -> set:
+        blender_scene = context.scene
+        used_materials = {
+            obj.active_material for obj in blender_scene.objects
+            if PATHTRACER_OBJECT_ID_KEY in obj and obj.active_material
+        }
+        materials_as_json = self._serialize_materials(used_materials)
+        objects_as_json = self._serialize_objects(blender_scene)
+        lights_as_json = self._serialize_lights(blender_scene)
+
+        if not blender_scene.camera:
+            self.report({'ERROR'}, "No active camera in the scene."); return {'CANCELLED'}
+        camera_as_json = self._serialize_camera(blender_scene.camera, blender_scene.rs_props.aperture)
+        render_as_json = self._serialize_render_settings(blender_scene)
+
+        final_scene_data = {
+            "camera": camera_as_json, "render": render_as_json, "materials": materials_as_json,
+            "objects": objects_as_json, "lights": lights_as_json,
+        }
+        try:
+            with open(self.filepath, "w") as json_file:
+                json.dump(final_scene_data, json_file, indent=4)
+        except Exception as error:
+            self.report({'ERROR'}, f"Failed to write file: {error}"); return {'CANCELLED'}
+
+        self.report({'INFO'}, f"Scene exported successfully to {self.filepath}"); return {'FINISHED'}
+
+    def invoke(self, context: Context, event):
+        context.window_manager.fileselect_add(self); return {'RUNNING_MODAL'}
+
+    def _serialize_materials(self, materials: set) -> dict:
+        materials_data = {}
+        for material in materials:
+            props = material.rs_props
+            materials_data[material.name] = {
+                "rgb": list(material.diffuse_color)[:3], "metallic": props.metallic,
+                "roughness": props.roughness, "ior": props.ior,
+                "volume_density": props.volume_density, "volume_anisotropy": props.volume_anisotropy
             }
+        return materials_data
 
-        # ――― objects
-        for ob in scn.objects:
-            if "rs_type" not in ob or not ob.active_material: continue
+    def _serialize_objects(self, blender_scene: Scene) -> list:
+        objects_data = []
+        for blender_object in blender_scene.objects:
+            if PATHTRACER_OBJECT_ID_KEY not in blender_object or not blender_object.active_material:
+                continue
 
-            base_obj = {
-                "name": ob.name,
-                "mat": ob.active_material.name
-            }
+            final_transform = CONVERSION_MATRIX_BLENDER_TO_PATHTRACER @ blender_object.matrix_world
+            common_properties = {"name": blender_object.name, "mat": blender_object.active_material.name}
+            pathtracer_object_type = blender_object[PATHTRACER_OBJECT_ID_KEY]
 
-            if ob["rs_type"] == "sphere":
-                objs.append({"sphere":{
-                    **base_obj,
-                    "center": to_list(ob.location),
-                    "radius": ob.dimensions.x * 0.5
-                }})
-            else: # plane - ENTIRELY NEW LOGIC HERE
-                # Get the object's world matrix and dimensions
-                mat_world = ob.matrix_world
-                dims = ob.dimensions
-
-                # Create vectors for half-width and half-height in the object's local space
-                u_local = mu.Vector((dims.x * 0.5, 0, 0))
-                v_local = mu.Vector((0, dims.y * 0.5, 0))
-
-                # Transform these vectors into world space using the rotation part of the matrix
-                u_world = mat_world.to_3x3() @ u_local
-                v_world = mat_world.to_3x3() @ v_local
-
-                objs.append({"plane":{
-                    **base_obj,
-                    "point" : to_list(ob.location),
-                    "u"     : to_list(u_world),
-                    "v"     : to_list(v_world)
+            if pathtracer_object_type == "sphere":
+                center_pathtracer = final_transform.translation
+                radius = blender_object.dimensions.x / 2.0
+                objects_data.append({"sphere": {
+                    **common_properties,
+                    "center": vector_to_list(center_pathtracer), "radius": radius
                 }})
 
-        # ――― lights (unchanged)
-        for ob in scn.objects:
-            if ob.type!='LIGHT' or ob.data.type!='AREA': continue
-            sz_x, sz_y = getattr(ob.data,'size',2.0), getattr(ob.data,'size_y',2.0)
-            q = ob.matrix_world.to_quaternion()
-            u, v = (q @ mu.Vector((1,0,0))).normalized()*sz_x, (q @ mu.Vector((0,1,0))).normalized()*sz_y
-            lights.append({"pos":to_list(ob.location), "u":to_list(u), "v":to_list(v), "intensity":[ob.data.energy]*3})
-        if not lights:
-            lights.append({"pos":[0,2.95,4], "u":[1,0,0], "v":[0,0,1], "intensity":[25,25,25]})
+            elif pathtracer_object_type == "plane":
+                dims = blender_object.dimensions
+                half_width = dims.x / 2.0
+                half_height = dims.y / 2.0
+                center_local = mu.Vector((0, 0, 0))
+                u_edge_local = mu.Vector((half_width, 0, 0))
+                v_edge_local = mu.Vector((0, half_height, 0))
+                center_pathtracer = final_transform @ center_local
+                u_edge_pathtracer = final_transform @ u_edge_local
+                v_edge_pathtracer = final_transform @ v_edge_local
+                u_vector = u_edge_pathtracer - center_pathtracer
+                v_vector = v_edge_pathtracer - center_pathtracer
+                objects_data.append({"plane": {
+                    **common_properties,
+                    "point": vector_to_list(center_pathtracer),
+                    "u": vector_to_list(u_vector), "v": vector_to_list(v_vector)
+                }})
+        return objects_data
 
-        # ――― camera (unchanged)
-        cam = scn.camera
-        if cam is None: self.report({'ERROR'},"No active camera"); return {'CANCELLED'}
-        forward = cam.matrix_world.to_3x3() @ mu.Vector((0, 0, -1))
-        cam_json = {"pos":to_list(cam.location), "look_at":to_list(cam.location + forward),
-                    "up":to_list(cam.matrix_world.to_3x3() @ mu.Vector((0, 1, 0))),
-                    "fov":cam.data.angle*180/math.pi, "aperture":scn.rs_props.aperture}
+    def _serialize_lights(self, blender_scene: Scene) -> list:
+        lights_data = []
+        for light_object in blender_scene.objects:
+            if light_object.type != 'LIGHT' or light_object.data.type != 'AREA':
+                continue
+            final_transform = CONVERSION_MATRIX_BLENDER_TO_PATHTRACER @ light_object.matrix_world
+            blender_light_data = light_object.data
+            if blender_light_data.shape == 'SQUARE':
+                width = blender_light_data.size
+                height = blender_light_data.size
+            else:  # RECTANGLE
+                width = blender_light_data.size
+                height = blender_light_data.size_y
+            center_local = mu.Vector((0, 0, 0))
+            u_edge_local = mu.Vector((width * 0.5, 0, 0))
+            v_edge_local = mu.Vector((0, height * 0.5, 0))
+            center_pathtracer = final_transform @ center_local
+            u_edge_pathtracer = final_transform @ u_edge_local
+            v_edge_pathtracer = final_transform @ v_edge_local
+            u_vector = u_edge_pathtracer - center_pathtracer
+            v_vector = v_edge_pathtracer - center_pathtracer
+            u_vector.negate()
+            lights_data.append({
+                "pos": vector_to_list(center_pathtracer), "u": vector_to_list(u_vector),
+                "v": vector_to_list(v_vector), "intensity": [blender_light_data.energy] * 3
+            })
+        if not lights_data:
+            lights_data.append({ "pos": [0, 5, 0], "u": [2, 0, 0], "v": [0, 0, 2], "intensity": [25, 25, 25] })
+        return lights_data
 
-        scene = { "camera":cam_json, "render":{"width":scn.render.resolution_x, "height":scn.render.resolution_y, "samples":scn.rs_props.samples},
-                  "materials":mats, "objects":objs, "lights":lights }
+    def _serialize_camera(self, camera_object: bpy.types.Object, aperture: float) -> dict:
+        blender_world_matrix = camera_object.matrix_world
+        pos_blender = blender_world_matrix.translation
+        forward_blender = (blender_world_matrix.to_3x3() @ mu.Vector((0, 0, -1))).normalized()
+        up_blender = (blender_world_matrix.to_3x3() @ mu.Vector((0, 1, 0))).normalized()
+        pos_pathtracer = CONVERSION_MATRIX_BLENDER_TO_PATHTRACER @ pos_blender
+        look_at_pathtracer = CONVERSION_MATRIX_BLENDER_TO_PATHTRACER @ (pos_blender + forward_blender)
+        up_pathtracer = (CONVERSION_MATRIX_BLENDER_TO_PATHTRACER.to_3x3() @ up_blender).normalized()
+        return {
+            "pos": vector_to_list(pos_pathtracer), "look_at": vector_to_list(look_at_pathtracer),
+            "up": vector_to_list(up_pathtracer), "fov": math.degrees(camera_object.data.angle),
+            "aperture": aperture
+        }
 
-        with open(self.filepath,"w") as f: json.dump(scene,f,indent=2)
-        self.report({'INFO'},"Exported → "+self.filepath); return {'FINISHED'}
+    def _serialize_render_settings(self, blender_scene: Scene) -> dict:
+        return {
+            "width": blender_scene.render.resolution_x, "height": blender_scene.render.resolution_y,
+            "samples": blender_scene.rs_props.samples
+        }
 
-    def invoke(self,ctx,_): ctx.window_manager.fileselect_add(self); return {'RUNNING_MODAL'}
 
-# ───────────────────────── IMPORT ──────────────────────────
-class RS_OT_import(Operator):
-    bl_idname = "rs.import_scene"; bl_label = "Import scene.json"
-    filepath : StringProperty(subtype='FILE_PATH', default="scene.json")
+# ───────────────────────── SCENE IMPORT OPERATOR ──────────────────────────────────
 
-    def execute(self, ctx):
-        path = Path(self.filepath)
-        if not path.is_file(): self.report({'ERROR'},"File not found"); return {'CANCELLED'}
-        data, scn = json.load(path.open()), ctx.scene
+class RS_OT_ImportScene(Operator):
+    bl_idname = "rs.import_scene"; bl_label = "Import from scene.json"
+    filepath: StringProperty(subtype='FILE_PATH', default="scene.json")
 
-        # --- render settings ---
-        rnd, cam_json = data.get("render",{}), data.get("camera",{})
-        scn.render.resolution_x, scn.render.resolution_y = rnd.get("width",800), rnd.get("height",600)
-        scn.rs_props.samples, scn.rs_props.aperture = rnd.get("samples",64), cam_json.get("aperture",0.02)
+    def execute(self, context: Context) -> set:
+        filepath = Path(self.filepath)
+        if not filepath.is_file():
+            self.report({'ERROR'}, f"File not found: {self.filepath}"); return {'CANCELLED'}
+        with filepath.open('r') as json_file:
+            scene_data = json.load(json_file)
+        self._clear_scene(context)
+        materials_map = self._create_materials(scene_data.get("materials", {}))
+        self._create_objects(context, scene_data.get("objects", []), materials_map)
+        self._create_lights(context, scene_data.get("lights", []))
+        self._setup_camera(context, scene_data.get("camera", {}))
+        self._setup_render_settings(context, scene_data.get("render", {}), scene_data.get("camera", {}))
+        self.report({'INFO'}, "Scene imported successfully."); return {'FINISHED'}
 
-        for ob in [o for o in scn.objects if ("rs_type" in o) or (o.type=='LIGHT' and o.data.type=='AREA')]:
-            bpy.data.objects.remove(ob,do_unlink=True)
-        for mat in [m for m in bpy.data.materials if m.name in data.get("materials",{})]:
-            bpy.data.materials.remove(mat)
+    def invoke(self, context: Context, event):
+        context.window_manager.fileselect_add(self); return {'RUNNING_MODAL'}
 
-        # --- MODIFIED: Create materials from the library ---
-        mats_json = data.get("materials",{})
-        for name, mj in mats_json.items():
-            mat = bpy.data.materials.new(name)
-            mat.use_nodes = False
-            mat.diffuse_color = (*mj["rgb"], 1.0) # Set standard color
-            mat.rs_props.metallic = mj["metallic"]
-            mat.rs_props.roughness = mj["roughness"]
-            mat.rs_props.ior = mj["ior"]
+    def _clear_scene(self, context: Context):
+        """Removes previously imported objects and materials to prevent duplication."""
+        # Find all objects that were created by this addon.
+        objects_to_remove = [
+            obj for obj in bpy.data.objects
+            if PATHTRACER_OBJECT_ID_KEY in obj or "RS_" in obj.name
+        ]
 
-        # --- MODIFIED: Create objects and assign materials by name ---
-        for entry in data.get("objects",[]):
-            desc = entry.get("sphere") or entry.get("plane")
+        # This uses the robust Data API to remove objects directly,
+        # which is not dependent on UI context and will not fail.
+        for obj in objects_to_remove:
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+        # The material removal logic remains correct.
+        mats_to_remove = [
+            mat for mat in bpy.data.materials
+            if hasattr(mat, 'rs_props')
+        ]
+        for mat in mats_to_remove:
+            if not mat.users:
+                bpy.data.materials.remove(mat)
+
+    def _create_materials(self, materials_json: dict) -> dict:
+        blender_mats = {}
+        for name, props in materials_json.items():
+            mat = bpy.data.materials.new(name); mat.use_nodes = False
+            mat.diffuse_color = (*props.get("rgb", [1,0,1]), 1.0)
+            mat.rs_props.metallic = props.get("metallic", 0.0); mat.rs_props.roughness = props.get("roughness", 0.5)
+            mat.rs_props.ior = props.get("ior", 1.5); mat.rs_props.volume_density = props.get("volume_density", 0.0)
+            mat.rs_props.volume_anisotropy = props.get("volume_anisotropy", 0.0); blender_mats[name] = mat
+        return blender_mats
+
+    def _create_objects(self, context: Context, objects_json: list, materials_map: dict):
+        CONV_inv = CONVERSION_MATRIX_BLENDER_TO_PATHTRACER.inverted()
+        for entry in objects_json:
+            obj = None; desc = None
             if "sphere" in entry:
-                bpy.ops.mesh.primitive_uv_sphere_add(radius=desc["radius"])
-                ob = ctx.active_object; ob.location = from_list(desc["center"])
-                ob["rs_type"] = "sphere"
-            else: # plane
-                bpy.ops.mesh.primitive_plane_add(size=2)
-                ob = ctx.active_object; ob.location = from_list(desc["point"])
-                ob.rotation_euler = look_at_quat(from_list(desc["normal"])).to_euler()
-                ob.scale.x, ob.scale.y = desc.get("size",[2,2])[0]*0.5, desc.get("size",[2,2])[1]*0.5
-                ob["rs_type"] = "plane"
+                desc = entry["sphere"]
+                center_blender = CONV_inv @ mu.Vector(desc.get("center"))
+                bpy.ops.mesh.primitive_uv_sphere_add(radius=desc.get("radius",1), location=center_blender)
+                obj = context.active_object; obj[PATHTRACER_OBJECT_ID_KEY] = "sphere"
+            elif "plane" in entry:
+                desc = entry["plane"]
+                center_blender = CONV_inv @ mu.Vector(desc.get("point"))
+                u = CONV_inv.to_3x3() @ mu.Vector(desc.get("u"))
+                v = CONV_inv.to_3x3() @ mu.Vector(desc.get("v"))
+                bpy.ops.mesh.primitive_plane_add(size=1.0, location=center_blender)
+                obj = context.active_object; normal = u.cross(v).normalized()
+                rot_quat = normal.to_track_quat('Z', 'Y'); obj.rotation_euler = rot_quat.to_euler()
+                obj.scale = (u.length, v.length, 1.0); obj[PATHTRACER_OBJECT_ID_KEY] = "plane"
+            if obj and desc:
+                obj.name = desc.get("name", "ImportedObject")
+                if desc.get("mat") in materials_map: obj.data.materials.append(materials_map[desc["mat"]])
 
-            ob.name = desc["name"] # ADDED: Set object name
-            if desc["mat"] in bpy.data.materials:
-                ob.active_material = bpy.data.materials[desc["mat"]]
+    def _create_lights(self, context: Context, lights_json: list):
+        CONV_inv = CONVERSION_MATRIX_BLENDER_TO_PATHTRACER.inverted()
+        for light_data in lights_json:
+            pos = CONV_inv @ mu.Vector(light_data.get("pos"))
+            bpy.ops.object.light_add(type='AREA', location=pos)
+            obj, light = context.active_object, context.active_object.data; obj.name="RS_Light"
+            intensity = light_data.get("intensity", [25])[0]
+            u = CONV_inv.to_3x3() @ -mu.Vector(light_data.get("u")) # Negate to reverse export
+            v = CONV_inv.to_3x3() @ mu.Vector(light_data.get("v"))
+            light.energy = intensity; light.shape = 'RECTANGLE'
+            light.size = u.length * 2.0; light.size_y = v.length * 2.0
+            normal = u.cross(v).normalized(); obj.rotation_euler = create_look_at_quaternion(normal).to_euler()
 
-        # --- lights --- (unchanged)
-        for lj in data.get("lights",[]):
-            data_l = bpy.data.lights.new("RS_Light","AREA"); data_l.shape = 'RECTANGLE'
-            data_l.energy, u, v = lj["intensity"][0], from_list(lj["u"]), from_list(lj["v"])
-            data_l.size, data_l.size_y = u.length, v.length
-            lob = bpy.data.objects.new("RS_Light", data_l); scn.collection.objects.link(lob)
-            lob.location = from_list(lj["pos"])
-            lob.rotation_euler = mu.Matrix((u.normalized(),v.normalized(),(u.cross(v)).normalized())).to_quaternion().to_euler()
+    def _setup_camera(self, context: Context, camera_json: dict):
+        CONV_inv = CONVERSION_MATRIX_BLENDER_TO_PATHTRACER.inverted()
+        cam = context.scene.camera
+        if not cam:
+            cam_data = bpy.data.cameras.new("RS_Camera"); cam = bpy.data.objects.new("RS_Camera", cam_data)
+            context.scene.collection.objects.link(cam); context.scene.camera = cam
+        pos = CONV_inv @ mu.Vector(camera_json.get("pos")); look_at = CONV_inv @ mu.Vector(camera_json.get("look_at"))
+        up = (CONV_inv.to_3x3() @ mu.Vector(camera_json.get("up"))).normalized(); cam.location = pos
+        cam.rotation_euler = create_look_at_quaternion(look_at - pos, up).to_euler()
+        cam.data.angle = math.radians(camera_json.get("fov", 50.0))
 
-        # --- camera --- (unchanged)
-        cam = scn.camera or bpy.data.objects.new("RayCam", bpy.data.cameras.new("RayCam"))
-        if cam.name not in scn.objects: scn.collection.objects.link(cam); scn.camera = cam
-        cam.location = from_list(cam_json.get("pos",[0,0,0]))
-        look = from_list(cam_json.get("look_at",[0,0,1])) - cam.location
-        cam.rotation_euler = look_at_quat(look, from_list(cam_json.get("up",[0,1,0]))).to_euler()
-        cam.data.angle = math.radians(cam_json.get("fov",60))
+    def _setup_render_settings(self, context: Context, render_json: dict, camera_json: dict):
+        render = context.scene.render; render.resolution_x = render_json.get("width", 1280)
+        render.resolution_y = render_json.get("height", 720); context.scene.rs_props.samples = render_json.get("samples", 128)
+        context.scene.rs_props.aperture = camera_json.get("aperture", 0.01)
 
-        self.report({'INFO'},"Scene imported"); return {'FINISHED'}
 
-    def invoke(self,ctx,_): ctx.window_manager.fileselect_add(self); return {'RUNNING_MODAL'}
+# ───────────────────────── UI PANEL & REGISTRATION ───────────────────────────────────────
 
-# ───────────────────────── UI panel ────────────────────────
-class RS_PT_panel(Panel):
-    bl_label="Ray Scene"; bl_space_type='VIEW_3D'; bl_region_type='UI'; bl_category='Ray Scene'
+class RS_PT_MainPanel(Panel):
+    bl_label = "Rust Pathtracer"; bl_space_type = 'VIEW_3D'; bl_region_type = 'UI'; bl_category = 'Ray Scene'
+    def draw(self, context: Context):
+        layout = self.layout; obj = context.active_object
+        box = layout.box(); col = box.column(align=True); col.label(text="Add Primitives", icon='ADD')
+        row = col.row(align=True)
+        row.operator(RS_OT_AddPlane.bl_idname, text="Plane", icon='MESH_PLANE')
+        row.operator(RS_OT_AddSphere.bl_idname, text="Sphere", icon='MESH_UVSPHERE')
+        col.operator(RS_OT_AddLight.bl_idname, text="Area Light", icon='LIGHT_AREA')
+        if obj and PATHTRACER_OBJECT_ID_KEY in obj:
+            box = layout.box(); col = box.column()
+            if obj.active_material:
+                mat = obj.active_material; col.label(text=f"Material: {mat.name}", icon='MATERIAL')
+                col.prop(mat, "diffuse_color", text="Base Color")
+                props = mat.rs_props
+                for prop_name in props.bl_rna.properties.keys():
+                    if prop_name not in ('rna_type', 'name'): col.prop(props, prop_name)
+            else: col.label(text="Assign a material to see properties", icon='ERROR')
+        box = layout.box(); col = box.column(align=True); col.label(text="Render Settings", icon='SCENE_DATA')
+        col.prop(context.scene.rs_props, "samples"); col.prop(context.scene.rs_props, "aperture")
+        layout.separator(); row = layout.row(align=True); row.scale_y = 1.5
+        row.operator(RS_OT_ImportScene.bl_idname, text="Import Scene", icon='FILE_FOLDER')
+        row.operator(RS_OT_ExportScene.bl_idname, text="Export Scene", icon='EXPORT')
 
-    def draw(self, ctx):
-        l = self.layout
-        l.operator("rs.add_plane"); l.operator("rs.add_sphere")
-        l.operator("rs.add_light", icon='LIGHT_AREA')
-        l.operator("rs.import_scene", icon='FILE_FOLDER')
-        l.separator()
-
-        ob = ctx.object
-        # --- MODIFIED: Show properties of the object's active material ---
-        if ob and "rs_type" in ob and ob.active_material:
-            mat = ob.active_material
-            box = l.box(); box.label(text=f"Material: {mat.name}")
-            # The color is now Blender's standard material color
-            box.prop(mat, "diffuse_color", text="Color")
-            # Custom properties are on the material's 'rs_props'
-            for p in ("metallic","roughness","ior"):
-                box.prop(mat.rs_props, p)
-        elif ob and "rs_type" in ob:
-            l.label(text="Assign a material to see properties.", icon='ERROR')
-
-        l.separator()
-        box = l.box(); box.label(text="Render Settings")
-        box.prop(ctx.scene.rs_props, "aperture"); box.prop(ctx.scene.rs_props, "samples")
-        l.separator()
-        l.operator("rs.export_scene", icon='EXPORT')
-
-# ───────────────────────── registration ────────────────────
-classes = ( RS_MatProps, RS_SceneProps, RS_OT_add_plane, RS_OT_add_sphere, RS_OT_add_light,
-            RS_OT_export, RS_OT_import, RS_PT_panel )
-
+classes = (
+    PathtracerMaterialProperties, PathtracerSceneProperties,
+    RS_OT_AddPlane, RS_OT_AddSphere, RS_OT_AddLight,
+    RS_OT_ExportScene, RS_OT_ImportScene, RS_PT_MainPanel,
+)
 def register():
-    for c in classes: bpy.utils.register_class(c)
-    # MODIFIED: Custom properties are now on Material and Scene
-    bpy.types.Material.rs_props = PointerProperty(type=RS_MatProps)
-    bpy.types.Scene.rs_props    = PointerProperty(type=RS_SceneProps)
-
+    for cls in classes: bpy.utils.register_class(cls)
+    bpy.types.Material.rs_props = PointerProperty(type=PathtracerMaterialProperties)
+    bpy.types.Scene.rs_props = PointerProperty(type=PathtracerSceneProperties)
 def unregister():
-    for c in reversed(classes): bpy.utils.unregister_class(c)
-    del bpy.types.Material.rs_props
-    del bpy.types.Scene.rs_props
-
-if __name__ == "__main__": register()
+    for cls in reversed(classes): bpy.utils.unregister_class(cls)
+    del bpy.types.Material.rs_props; del bpy.types.Scene.rs_props
+if __name__ == "__main__":
+    register()
