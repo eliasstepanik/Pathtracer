@@ -2,7 +2,7 @@ bl_info = {
     "name": "Rust Pathtracer Scene Builder",
     "author": "Elias Stepanik (Rewritten by AI)",
     "description": "A robust tool to create, import, and export scenes for the Rust pathtracer.",
-    "version": (3, 0, 3), # Definitive fix for scene clearing bug
+    "version": (3, 1, 0), # Major architectural fix for Import
     "blender": (4, 1, 0),
     "location": "3D View > Sidebar > Ray Scene",
     "category": "Import-Export",
@@ -192,11 +192,9 @@ class RS_OT_ExportScene(Operator):
             final_transform = CONVERSION_MATRIX_BLENDER_TO_PATHTRACER @ light_object.matrix_world
             blender_light_data = light_object.data
             if blender_light_data.shape == 'SQUARE':
-                width = blender_light_data.size
-                height = blender_light_data.size
-            else:  # RECTANGLE
-                width = blender_light_data.size
-                height = blender_light_data.size_y
+                width = blender_light_data.size; height = blender_light_data.size
+            else:
+                width = blender_light_data.size; height = blender_light_data.size_y
             center_local = mu.Vector((0, 0, 0))
             u_edge_local = mu.Vector((width * 0.5, 0, 0))
             v_edge_local = mu.Vector((0, height * 0.5, 0))
@@ -259,26 +257,11 @@ class RS_OT_ImportScene(Operator):
         context.window_manager.fileselect_add(self); return {'RUNNING_MODAL'}
 
     def _clear_scene(self, context: Context):
-        """Removes previously imported objects and materials to prevent duplication."""
-        # Find all objects that were created by this addon.
-        objects_to_remove = [
-            obj for obj in bpy.data.objects
-            if PATHTRACER_OBJECT_ID_KEY in obj or "RS_" in obj.name
-        ]
-
-        # This uses the robust Data API to remove objects directly,
-        # which is not dependent on UI context and will not fail.
-        for obj in objects_to_remove:
-            bpy.data.objects.remove(obj, do_unlink=True)
-
-        # The material removal logic remains correct.
-        mats_to_remove = [
-            mat for mat in bpy.data.materials
-            if hasattr(mat, 'rs_props')
-        ]
+        objects_to_remove = [o for o in bpy.data.objects if PATHTRACER_OBJECT_ID_KEY in o or "RS_" in o.name]
+        for obj in objects_to_remove: bpy.data.objects.remove(obj, do_unlink=True)
+        mats_to_remove = [m for m in bpy.data.materials if hasattr(m, 'rs_props')]
         for mat in mats_to_remove:
-            if not mat.users:
-                bpy.data.materials.remove(mat)
+            if not mat.users: bpy.data.materials.remove(mat)
 
     def _create_materials(self, materials_json: dict) -> dict:
         blender_mats = {}
@@ -291,6 +274,7 @@ class RS_OT_ImportScene(Operator):
         return blender_mats
 
     def _create_objects(self, context: Context, objects_json: list, materials_map: dict):
+        """Creates Blender objects from JSON by reconstructing their world matrix."""
         CONV_inv = CONVERSION_MATRIX_BLENDER_TO_PATHTRACER.inverted()
         for entry in objects_json:
             obj = None; desc = None
@@ -301,33 +285,47 @@ class RS_OT_ImportScene(Operator):
                 obj = context.active_object; obj[PATHTRACER_OBJECT_ID_KEY] = "sphere"
             elif "plane" in entry:
                 desc = entry["plane"]
-                center_blender = CONV_inv @ mu.Vector(desc.get("point"))
-                u = CONV_inv.to_3x3() @ mu.Vector(desc.get("u"))
-                v = CONV_inv.to_3x3() @ mu.Vector(desc.get("v"))
-                bpy.ops.mesh.primitive_plane_add(size=1.0, location=center_blender)
-                obj = context.active_object; normal = u.cross(v).normalized()
-                rot_quat = normal.to_track_quat('Z', 'Y'); obj.rotation_euler = rot_quat.to_euler()
-                obj.scale = (u.length, v.length, 1.0); obj[PATHTRACER_OBJECT_ID_KEY] = "plane"
+                center_pt = mu.Vector(desc.get("point")); u_pt = mu.Vector(desc.get("u")); v_pt = mu.Vector(desc.get("v"))
+                normal_pt = u_pt.cross(v_pt)
+                pathtracer_matrix = mu.Matrix(((u_pt.x, v_pt.x, normal_pt.x, center_pt.x),
+                                               (u_pt.y, v_pt.y, normal_pt.y, center_pt.y),
+                                               (u_pt.z, v_pt.z, normal_pt.z, center_pt.z),
+                                               (0,      0,      0,           1          )))
+                blender_matrix = CONV_inv @ pathtracer_matrix
+                bpy.ops.mesh.primitive_plane_add(size=2.0)
+                obj = context.active_object
+                obj.matrix_world = blender_matrix
+                obj[PATHTRACER_OBJECT_ID_KEY] = "plane"
             if obj and desc:
                 obj.name = desc.get("name", "ImportedObject")
-                if desc.get("mat") in materials_map: obj.data.materials.append(materials_map[desc["mat"]])
+                if desc.get("mat") in materials_map: obj.data.materials.append(materials_map[desc.get("mat")])
 
     def _create_lights(self, context: Context, lights_json: list):
+        """Creates Blender AREA lights by reconstructing their world matrix."""
         CONV_inv = CONVERSION_MATRIX_BLENDER_TO_PATHTRACER.inverted()
         for light_data in lights_json:
-            pos = CONV_inv @ mu.Vector(light_data.get("pos"))
-            bpy.ops.object.light_add(type='AREA', location=pos)
-            obj, light = context.active_object, context.active_object.data; obj.name="RS_Light"
-            intensity = light_data.get("intensity", [25])[0]
-            u = CONV_inv.to_3x3() @ -mu.Vector(light_data.get("u")) # Negate to reverse export
-            v = CONV_inv.to_3x3() @ mu.Vector(light_data.get("v"))
-            light.energy = intensity; light.shape = 'RECTANGLE'
-            light.size = u.length * 2.0; light.size_y = v.length * 2.0
-            normal = u.cross(v).normalized(); obj.rotation_euler = create_look_at_quaternion(normal).to_euler()
+            center_pt = mu.Vector(light_data.get("pos")); u_pt = -mu.Vector(light_data.get("u")); v_pt = mu.Vector(light_data.get("v"))
+            normal_pt = u_pt.cross(v_pt)
+            pathtracer_matrix = mu.Matrix(((u_pt.x, v_pt.x, normal_pt.x, center_pt.x),
+                                           (u_pt.y, v_pt.y, normal_pt.y, center_pt.y),
+                                           (u_pt.z, v_pt.z, normal_pt.z, center_pt.z),
+                                           (0,      0,      0,           1          )))
+            blender_matrix = CONV_inv @ pathtracer_matrix
+            bpy.ops.object.light_add(type='AREA')
+            obj, light = context.active_object, context.active_object.data
+            obj.name = "RS_ImportedLight"
+            location, rotation, scale = blender_matrix.decompose()
+            obj.location = location
+            obj.rotation_euler = rotation.to_euler()
+            obj.scale = (1, 1, 1)
+            light.shape = 'RECTANGLE'
+            light.size = scale.x * 2.0
+            light.size_y = scale.y * 2.0
+            light.energy = light_data.get("intensity", [25])[0]
 
     def _setup_camera(self, context: Context, camera_json: dict):
         CONV_inv = CONVERSION_MATRIX_BLENDER_TO_PATHTRACER.inverted()
-        cam = context.scene.camera
+        cam = context.scene.camera;
         if not cam:
             cam_data = bpy.data.cameras.new("RS_Camera"); cam = bpy.data.objects.new("RS_Camera", cam_data)
             context.scene.collection.objects.link(cam); context.scene.camera = cam
@@ -340,7 +338,6 @@ class RS_OT_ImportScene(Operator):
         render = context.scene.render; render.resolution_x = render_json.get("width", 1280)
         render.resolution_y = render_json.get("height", 720); context.scene.rs_props.samples = render_json.get("samples", 128)
         context.scene.rs_props.aperture = camera_json.get("aperture", 0.01)
-
 
 # ───────────────────────── UI PANEL & REGISTRATION ───────────────────────────────────────
 
