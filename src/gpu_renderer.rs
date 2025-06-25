@@ -39,6 +39,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
         fov: f32,
         sphere_count: u32,
         plane_count: u32,
+        _pad3: [u32;3],
     }
 
     #[repr(C)]
@@ -86,6 +87,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
         fov: scene.camera.fov,
         sphere_count: scene.objects.iter().filter(|o| matches!(o, Object::Sphere(_))).count() as u32,
         plane_count: scene.objects.iter().filter(|o| matches!(o, Object::Plane(_))).count() as u32,
+        _pad3: [0;3],
     };
 
     let light = scene.lights.get(0).expect("Scene needs at least one light");

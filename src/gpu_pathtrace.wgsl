@@ -10,6 +10,7 @@ struct Camera {
     fov: f32,
     sphere_count: u32,
     plane_count: u32,
+    _pad3: vec3<u32>,
 };
 
 struct Light {
