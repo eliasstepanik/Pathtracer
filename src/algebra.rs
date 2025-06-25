@@ -50,6 +50,10 @@ impl From<[f32; 3]> for Vec3 {
     fn from(a: [f32; 3]) -> Self { Vec3(a[0], a[1], a[2]) }
 }
 
+impl From<Vec3> for [f32; 3] {
+    fn from(v: Vec3) -> Self { [v.0, v.1, v.2] }
+}
+
 /* Custom helper so Serde turns a JSON array into Vec3 */
 pub fn vec3_from_array<'de, D>(d: D) -> Result<Vec3, D::Error>
 where
