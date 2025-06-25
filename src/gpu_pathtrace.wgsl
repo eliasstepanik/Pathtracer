@@ -105,14 +105,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    var final = vec3<f32>(0.0,0.0,0.0);
+    var out_color = vec3<f32>(0.0,0.0,0.0);
     if t_min < 1e9 {
         let hit = camera.pos + dir * t_min;
-        final = shade(hit, hit_normal, hit_color);
+        out_color = shade(hit, hit_normal, hit_color);
     }
-    let r = u32(clamp(final.x, 0.0, 1.0) * 255.0);
-    let g = u32(clamp(final.y, 0.0, 1.0) * 255.0);
-    let b = u32(clamp(final.z, 0.0, 1.0) * 255.0);
+    let r = u32(clamp(out_color.x, 0.0, 1.0) * 255.0);
+    let g = u32(clamp(out_color.y, 0.0, 1.0) * 255.0);
+    let b = u32(clamp(out_color.z, 0.0, 1.0) * 255.0);
     let index = gid.y * camera.width + gid.x;
     output[index] = r | (g<<8u) | (b<<16u) | 0xff000000u;
 }
