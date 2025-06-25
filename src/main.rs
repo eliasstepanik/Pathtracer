@@ -87,9 +87,15 @@ fn main() {
 
     if gpu_mode {
         println!("Running GPU renderer...");
-        let img = gpu_renderer::render(&scene);
+        let rgba_img = gpu_renderer::render(&scene);
         let name = render_image_name(width, height, 1, aperture, focus);
-        img.save(&name).unwrap();
+
+        // --- START: MODIFICATION ---
+        // Explicitly convert the RgbaImage to an RgbImage before saving as JPEG.
+        let rgb_img = image::DynamicImage::ImageRgba8(rgba_img).to_rgb8();
+        rgb_img.save(&name).unwrap();
+        // --- END: MODIFICATION ---
+
         println!("Saved → {name}");
         return;
     }

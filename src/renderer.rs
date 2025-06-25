@@ -157,7 +157,7 @@ pub fn render_image_name(w:u32,h:u32,s:u32,ap:f32,f:f32)->String{
     let suf:String = rand::thread_rng()
         .sample_iter(&rand::distributions::Alphanumeric)
         .take(6).map(char::from).collect();
-    format!("renders/render_{w}x{h}_s{s}_ap{ap:.2}_f{f:.1}_{suf}.jpg")
+    format!("renders/render_{w}x{h}_s{s}_ap{ap:.2}_f{f:.1}_{suf}.png")
 }
 
 pub fn pixel_color(
