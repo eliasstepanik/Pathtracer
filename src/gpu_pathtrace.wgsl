@@ -257,7 +257,7 @@ fn direct_light_sample(hit: HitInfo, v: vec3<f32>) -> vec3<f32> {
         let l = normalize(lvec);
 
         var shadow_ray: Ray;
-        shadow_ray.origin = hit.pos;
+        shadow_ray.origin = hit.pos + hit.normal * 0.001;
         shadow_ray.dir = l;
         let shadow_hit = intersect_scene(shadow_ray);
 
@@ -356,7 +356,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let diffuse_chance = 1.0 - hit.mat.metallic;
             if (rand() < diffuse_chance) { // Diffuse bounce
                 next_dir = sample_hemisphere(hit_normal);
-                throughput *= hit.mat.color; // Throughput is multiplied by albedo
+                let cos_theta = max(0.0, dot(hit_normal, next_dir));
+                throughput *= (hit.mat.color / PI) * cos_theta;
             } else { // Specular bounce
                 let h = sample_ggx_h(hit_normal, hit.mat.roughness);
                 next_dir = reflect(-view_dir, h);
@@ -371,7 +372,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             throughput /= p;
 
-            current_ray.origin = hit.pos;
+            current_ray.origin = hit.pos + hit.normal * 0.001;
             current_ray.dir = next_dir;
         }
     }
