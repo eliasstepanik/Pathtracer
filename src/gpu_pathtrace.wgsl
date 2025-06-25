@@ -1,38 +1,38 @@
 struct Camera {
-    pos: vec3<f32>;
-    _pad0: f32;
-    look_at: vec3<f32>;
-    _pad1: f32;
-    up: vec3<f32>;
-    _pad2: f32;
-    width: u32;
-    height: u32;
-    fov: f32;
-    sphere_count: u32;
-    plane_count: u32;
+    pos: vec3<f32>,
+    _pad0: f32,
+    look_at: vec3<f32>,
+    _pad1: f32,
+    up: vec3<f32>,
+    _pad2: f32,
+    width: u32,
+    height: u32,
+    fov: f32,
+    sphere_count: u32,
+    plane_count: u32,
 };
 
 struct Light {
-    pos: vec3<f32>;
-    _pad0: f32;
-    intensity: vec3<f32>;
-    _pad1: f32;
+    pos: vec3<f32>,
+    _pad0: f32,
+    intensity: vec3<f32>,
+    _pad1: f32,
 };
 
 struct Sphere {
-    center: vec3<f32>;
-    radius: f32;
-    color: vec3<f32>;
-    _pad: f32;
+    center: vec3<f32>,
+    radius: f32,
+    color: vec3<f32>,
+    _pad: f32,
 };
 
 struct Plane {
-    point: vec3<f32>;
-    _pad0: f32;
-    normal: vec3<f32>;
-    _pad1: f32;
-    color: vec3<f32>;
-    _pad2: f32;
+    point: vec3<f32>,
+    _pad0: f32,
+    normal: vec3<f32>,
+    _pad1: f32,
+    color: vec3<f32>,
+    _pad2: f32,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -62,7 +62,8 @@ fn intersect_plane(ro: vec3<f32>, rd: vec3<f32>, p: Plane) -> f32 {
 fn shade(hit: vec3<f32>, normal: vec3<f32>, color: vec3<f32>) -> vec3<f32> {
     let l = normalize(light.pos - hit);
     let diff = max(dot(normal, l), 0.0);
-    let dist2 = distanceSquared(light.pos, hit);
+    let dist = distance(light.pos, hit);
+    let dist2 = dist * dist;
     return color * diff * light.intensity / dist2;
 }
 
