@@ -37,14 +37,10 @@ async fn render_async(scene: &Scene) -> RgbaImage {
     #[repr(C)]
     #[derive(Clone, Copy, Pod, Zeroable)]
     struct CameraUniform {
-        pos: [f32;3],
-        _pad0: f32,
-        look_at: [f32;3],
-        _pad1: f32,
-        up: [f32;3],
-        _pad2: f32,
-        forward: [f32;3],
-        _pad3: f32,
+        pos: [f32; 4],
+        look_at: [f32; 4],
+        up: [f32; 4],
+        forward: [f32; 4],
         width: u32,
         height: u32,
         fov: f32,
@@ -52,7 +48,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
         plane_count: u32,
         aperture: f32,
         focus_dist: f32,
-        _pad4: u32,
+        _pad4: u32, // This last pad aligns the total struct size.
     }
 
     // NEW: RenderParams to hold sampling info
@@ -68,53 +64,43 @@ async fn render_async(scene: &Scene) -> RgbaImage {
     #[repr(C)]
     #[derive(Clone, Copy, Pod, Zeroable)]
     struct LightUniform {
-        pos: [f32;3],
-        _pad0: f32,
-        intensity: [f32;3],
-        _pad1: f32,
-        // NEW: Add area light vectors
-        u: [f32;3],
-        _pad2: f32,
-        v: [f32;3],
-        _pad3: f32,
+        pos: [f32; 4], // MODIFIED
+        intensity: [f32; 4], // MODIFIED
+        u: [f32; 4], // MODIFIED
+        v: [f32; 4], // MODIFIED
     }
 
-    // MODIFIED: SphereData now includes PBR material properties
     #[repr(C)]
     #[derive(Clone, Copy, Pod, Zeroable)]
     struct SphereData {
-        center: [f32;3],
+        center: [f32; 4], // MODIFIED
+        color: [f32; 4], // MODIFIED
         radius: f32,
-        color: [f32;3],
         metallic: f32,
         roughness: f32,
-        _pad: [f32;3], // Pad to align to 16 bytes
+        _pad: f32, // MODIFIED to a single f32 for alignment
     }
 
-    // MODIFIED: PlaneData now includes PBR material properties
     #[repr(C)]
     #[derive(Clone, Copy, Pod, Zeroable)]
     struct PlaneData {
-        point: [f32;3],
-        _pad0: f32,
-        normal: [f32;3],
+        point: [f32; 4], // MODIFIED
+        normal: [f32; 4], // MODIFIED
+        u: [f32; 4], // MODIFIED
+        v: [f32; 4], // MODIFIED
+        color: [f32; 4], // MODIFIED
         metallic: f32,
-        u: [f32;3],
         roughness: f32,
-        v: [f32;3],
-        _pad1: f32,
-        color: [f32;3],
-        _pad2: f32,
+        _pad: [f32; 2], // MODIFIED for alignment
     }
-
     let forward = (scene.camera.look_at - scene.camera.pos).normalize();
     let focus_dist = crate::renderer::autofocus(scene.camera.pos, forward.cross(scene.camera.up).normalize(), forward.cross(forward.cross(scene.camera.up).normalize()), forward, scene.render.width as f32 / scene.render.height as f32, (scene.camera.fov.to_radians() * 0.5).tan(), width, height, &scene.objects);
 
     let cam = CameraUniform {
-        pos: scene.camera.pos.into(), _pad0: 0.0,
-        look_at: scene.camera.look_at.into(), _pad1: 0.0,
-        up: scene.camera.up.into(), _pad2: 0.0,
-        forward: forward.into(), _pad3: 0.0,
+        pos: [scene.camera.pos.0, scene.camera.pos.1, scene.camera.pos.2, 0.0],
+        look_at: [scene.camera.look_at.0, scene.camera.look_at.1, scene.camera.look_at.2, 0.0],
+        up: [scene.camera.up.0, scene.camera.up.1, scene.camera.up.2, 0.0],
+        forward: [forward.0, forward.1, forward.2, 0.0],
         width, height,
         fov: scene.camera.fov,
         sphere_count: scene.objects.iter().filter(|o| matches!(o, Object::Sphere(_))).count() as u32,
@@ -134,10 +120,10 @@ async fn render_async(scene: &Scene) -> RgbaImage {
 
     let light = scene.lights.get(0).expect("Scene needs at least one light");
     let light_uniform = LightUniform {
-        pos: light.pos.into(), _pad0: 0.0,
-        intensity: light.intensity.into(), _pad1: 0.0,
-        u: light.u.into(), _pad2: 0.0,
-        v: light.v.into(), _pad3: 0.0,
+        pos: [light.pos.0, light.pos.1, light.pos.2, 0.0], // MODIFIED
+        intensity: [light.intensity.0, light.intensity.1, light.intensity.2, 0.0], // MODIFIED
+        u: [light.u.0, light.u.1, light.u.2, 0.0], // MODIFIED
+        v: [light.v.0, light.v.1, light.v.2, 0.0], // MODIFIED
     };
 
     let mut spheres = vec![SphereData::zeroed(); MAX_SPHERES];
@@ -148,21 +134,25 @@ async fn render_async(scene: &Scene) -> RgbaImage {
         match obj {
             Object::Sphere(s) if scount < MAX_SPHERES => {
                 spheres[scount] = SphereData {
-                    center: s.center.into(), radius: s.radius,
-                    color: s.material.color.into(),
+                    center: [s.center.0, s.center.1, s.center.2, 0.0], // MODIFIED
+                    color: [s.material.color.0, s.material.color.1, s.material.color.2, 0.0], // MODIFIED
+                    radius: s.radius,
                     metallic: s.material.metallic,
                     roughness: s.material.roughness,
-                    _pad: [0.0;3],
+                    _pad: 0.0,
                 };
                 scount += 1;
             }
             Object::Plane(p) if pcount < MAX_PLANES => {
                 planes[pcount] = PlaneData {
-                    point: p.point.into(), _pad0: 0.0,
-                    normal: p.normal.into(), metallic: p.material.metallic,
-                    u: p.u.into(), roughness: p.material.roughness,
-                    v: p.v.into(), _pad1: 0.0,
-                    color: p.material.color.into(), _pad2: 0.0,
+                    point: [p.point.0, p.point.1, p.point.2, 0.0], // MODIFIED
+                    normal: [p.normal.0, p.normal.1, p.normal.2, 0.0], // MODIFIED
+                    u: [p.u.0, p.u.1, p.u.2, 0.0], // MODIFIED
+                    v: [p.v.0, p.v.1, p.v.2, 0.0], // MODIFIED
+                    color: [p.material.color.0, p.material.color.1, p.material.color.2, 0.0], // MODIFIED
+                    metallic: p.material.metallic,
+                    roughness: p.material.roughness,
+                    _pad: [0.0; 2],
                 };
                 pcount += 1;
             }
@@ -180,7 +170,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
     let output_buffer_size = (width * height * 4) as wgpu::BufferAddress;
     let output_buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("Output"), size: output_buffer_size, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
     let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("Staging"), size: output_buffer_size, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
-    
+
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("Pathtrace"), source: wgpu::ShaderSource::Wgsl(include_str!("gpu_pathtrace.wgsl").into())});
 
     let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
