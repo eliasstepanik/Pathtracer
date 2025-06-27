@@ -10,7 +10,8 @@ mod gpu_renderer;
 mod plane;
 mod sphere;
 
-use std::env;
+use std::{env, fs};
+use std::path::Path;
 use crate::{
     renderer::render_image_name,
     algebra::{sample_disk, Vec3},
@@ -94,6 +95,10 @@ fn main() {
         let name = render_image_name(width, height, samples, aperture, focus);
         // --- END: BUG FIX ---
 
+
+        if let Some(dir) = Path::new(&name).parent() {
+            fs::create_dir_all(dir).expect("Failed to create renders directory");
+        }
         // The image saving logic was slightly incorrect for PNG.
         // .save() works directly on the RgbaImage.
         rgba_img.save(&name).unwrap();
@@ -144,6 +149,11 @@ fn main() {
 
     for ((x, y), rgb) in rows { img.put_pixel(x, y, Rgb(rgb)); }
     let name = render_image_name(width, height, samples, aperture, focus);
+
+    if let Some(dir) = Path::new(&name).parent() {
+        fs::create_dir_all(dir).expect("Failed to create renders directory");
+    }
+    
     img.save(&name).unwrap();
     println!("Saved → {name}");
 }
