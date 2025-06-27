@@ -124,8 +124,8 @@ async fn render_async(scene: &Scene) -> RgbaImage {
             seed1: rng.gen(),
             seed2: rng.gen(),
         };
-        
-        
+
+
         let cam = CameraUniform {
             pos: [scene.camera.pos.0, scene.camera.pos.1, scene.camera.pos.2, 0.0],
             forward: [forward.0, forward.1, forward.2, 0.0],
@@ -177,7 +177,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
     let mut img = RgbaImage::new(width, height);
     for (i, pixel_data) in accumulated_color.iter().enumerate() {
         let x = (i as u32) % width;
-        let y = (i as u32) / width;
+        let y = height - 1 - (i as u32) / width;
         let avg_r = pixel_data[0] / total_samples as f32;
         let avg_g = pixel_data[1] / total_samples as f32;
         let avg_b = pixel_data[2] / total_samples as f32;
