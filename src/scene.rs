@@ -43,6 +43,8 @@ pub struct SphereDesc {
     pub center: Vec3,
     pub radius: f32,
     pub mat:    String,
+    #[serde(default)] // Default to false if not present in JSON
+    pub in_focus: bool,
 }
 #[derive(Deserialize)]
 pub struct PlaneDesc {
@@ -54,6 +56,8 @@ pub struct PlaneDesc {
     #[serde(deserialize_with = "vec3_from_array")]
     pub v:      Vec3,
     pub mat   : String,
+    #[serde(default)] // Default to false if not present in JSON
+    pub in_focus: bool,
 }
 
 
@@ -127,6 +131,7 @@ pub fn load(path:&str) -> Scene {
                     center:   sphere.center,
                     radius:   sphere.radius,
                     material,
+                    in_focus: sphere.in_focus, // ADDED
                 }));
             },
             ObjectJson::Plane { plane } => {
@@ -139,6 +144,7 @@ pub fn load(path:&str) -> Scene {
                     v:        plane.v,
                     normal,
                     material,
+                    in_focus: plane.in_focus, // ADDED
                 }));
             }
         }

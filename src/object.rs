@@ -15,4 +15,11 @@ impl Object {
             Self::Plane (p) => p.hit(ro, rd),
         }
     }
+
+    pub fn is_in_focus(&self) -> bool {
+        match self {
+            Self::Sphere(s) => s.in_focus,
+            Self::Plane(p) => p.in_focus,
+        }
+    }
 }

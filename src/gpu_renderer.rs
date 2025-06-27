@@ -104,6 +104,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
     let up = right.cross(forward);
     let focus_dist = crate::renderer::autofocus(scene.camera.pos, right, up, forward, width as f32 / height as f32, (scene.camera.fov.to_radians() * 0.5).tan(), width, height, &scene.objects);
 
+
     let light = scene.lights.get(0).expect("Scene needs at least one light");
     let light_uniform = LightUniform {
         pos: [light.pos.0, light.pos.1, light.pos.2, 0.0],

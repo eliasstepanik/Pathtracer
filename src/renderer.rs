@@ -205,6 +205,14 @@ pub fn autofocus(
     cam: Vec3, right: Vec3, up: Vec3, forward: Vec3,
     aspect: f32, scale: f32, w: u32, h: u32, objs: &[Object]
 ) -> f32 {
+    let focus_objects: Vec<_> = objs.iter().filter(|o| o.is_in_focus()).collect();
+
+
+    if focus_objects.is_empty() {
+        return 5.0;
+    }
+
+
     let mut dists = Vec::new();
     for i in 0..5 {
         for j in 0..5 {
@@ -216,7 +224,7 @@ pub fn autofocus(
 
             let dir = (right.scale(u) + up.scale(v) + forward).normalize();
 
-            if let Some((t, _n, _)) = intersect_closest(cam, dir, objs) {
+            if let Some((t, _n, _)) = intersect_closest(cam, dir, &focus_objects) {
                 dists.push(t);
             }
         }
@@ -345,11 +353,11 @@ pub fn trace(
 }
 
 
-fn intersect_closest(ro: Vec3, rd: Vec3, objs: &[Object])
+fn intersect_closest(ro: Vec3, rd: Vec3, objs: &[impl std::borrow::Borrow<Object>])
                      -> Option<(f32, Vec3, Material)>
 {
     objs.iter()
-        .filter_map(|o| o.hit(ro, rd))
+        .filter_map(|o| o.borrow().hit(ro, rd))
         .min_by(|a, b| a.0.total_cmp(&b.0))
 }
 
