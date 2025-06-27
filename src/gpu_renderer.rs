@@ -124,10 +124,12 @@ async fn render_async(scene: &Scene) -> RgbaImage {
             seed1: rng.gen(),
             seed2: rng.gen(),
         };
+        
+        
         let cam = CameraUniform {
             pos: [scene.camera.pos.0, scene.camera.pos.1, scene.camera.pos.2, 0.0],
             forward: [forward.0, forward.1, forward.2, 0.0],
-            up: [up.0, up.1, up.2, 0.0],
+            up: [up.0, up.1, up.2, 0.0], // Send the correct up vector
             right: [right.0, right.1, right.2, 0.0],
             width, height, fov: scene.camera.fov,
             sphere_count: spheres.iter().filter(|s| s.radius > 0.0).count() as u32,
