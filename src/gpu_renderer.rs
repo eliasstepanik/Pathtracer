@@ -90,7 +90,15 @@ async fn render_async(scene: &Scene) -> RgbaImage {
 
     // --- Progressive Render Setup ---
     let total_samples = scene.render.samples;
-    let samples_per_dispatch = 128.min(total_samples);
+
+    let target_workload_per_dispatch: u64 = 100_000_000;
+    let pixels = (width * height) as u64;
+
+
+    let mut samples_per_dispatch = (target_workload_per_dispatch / pixels.max(1)) as u32;
+    samples_per_dispatch = samples_per_dispatch.max(1).min(total_samples);
+
+
     let num_dispatches = (total_samples + samples_per_dispatch - 1) / samples_per_dispatch;
 
     let mut accumulated_color = vec![[0.0f32; 4]; (width * height) as usize];
