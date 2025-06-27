@@ -9,7 +9,7 @@ if exist "%OUT%" del "%OUT%"
 if not exist "target" mkdir "target"
 
 rem -------- merge files --------
-for %%E in (rs toml py) do (
+for %%E in (rs toml py wgsl) do (
     for /f "delims=" %%F in ('
         dir /b /s /o:n *.%%E ^| findstr /v /i "\\target\\"
     ') do (

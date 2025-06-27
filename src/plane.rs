@@ -12,6 +12,7 @@ pub struct Plane {
     pub v       : Vec3, // Vector from center to another edge (encodes direction and half-height)
     pub normal  : Vec3, // Pre-calculated normal (u.cross(v))
     pub material: Material,
+    pub in_focus: bool, // ADDED
 }
 impl Plane {
     /// Returns (t, hit_normal, material) or `None` if the ray misses.

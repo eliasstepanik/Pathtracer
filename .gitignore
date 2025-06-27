@@ -1,1 +1,5 @@
 /target
+/renders
+Cargo.lock
+scene.json
+.idea

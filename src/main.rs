@@ -6,6 +6,7 @@ mod light;
 mod scene;
 mod tonemap;
 mod renderer;
+mod gpu_renderer;
 mod plane;
 mod sphere;
 
@@ -14,7 +15,7 @@ use crate::{
     renderer::render_image_name,
     algebra::{sample_disk, Vec3},
 };
-use image::{Rgb, RgbImage};
+use image::{Rgb, RgbImage, RgbaImage};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::thread_rng;
 use rayon::prelude::*;
@@ -27,6 +28,7 @@ const MAX_GLASS_BOUNCES: u32 = 8;
 fn main() {
     let args: Vec<String> = env::args().collect();
     let quiet_mode = args.contains(&"--quiet".to_string()) || args.contains(&"-q".to_string());
+    let gpu_mode = args.contains(&"--gpu".to_string());
 
     // ── parse JSON ────────────────────────────────────────────────────────
     let scene = load("scene.json");
@@ -81,6 +83,23 @@ fn main() {
     for (i, l) in scene.lights.iter().enumerate() {
         println!(" [{}] Light {{ pos: {:?}, u: {:?}, v: {:?}, intensity: {:?} }}",
                  i, l.pos, l.u, l.v, l.intensity);
+    }
+
+    if gpu_mode {
+        println!("Running GPU renderer...");
+        let rgba_img = gpu_renderer::render(&scene);
+
+        // --- START: BUG FIX ---
+        // Replace the hardcoded '1' with the actual sample count from the scene file.
+        let name = render_image_name(width, height, samples, aperture, focus);
+        // --- END: BUG FIX ---
+
+        // The image saving logic was slightly incorrect for PNG.
+        // .save() works directly on the RgbaImage.
+        rgba_img.save(&name).unwrap();
+
+        println!("Saved → {name}");
+        return;
     }
 
     // ── multithreaded render loop ─────────────────────────────────────────

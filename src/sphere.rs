@@ -11,6 +11,7 @@ pub struct Sphere {
     pub center   : Vec3,
     pub radius   : f32,
     pub material : Material,
+    pub in_focus : bool, // ADDED
 }
 
 impl Sphere {
