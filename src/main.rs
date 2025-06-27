@@ -88,13 +88,15 @@ fn main() {
     if gpu_mode {
         println!("Running GPU renderer...");
         let rgba_img = gpu_renderer::render(&scene);
-        let name = render_image_name(width, height, 1, aperture, focus);
 
-        // --- START: MODIFICATION ---
-        // Explicitly convert the RgbaImage to an RgbImage before saving as JPEG.
-        let rgb_img = image::DynamicImage::ImageRgba8(rgba_img).to_rgb8();
-        rgb_img.save(&name).unwrap();
-        // --- END: MODIFICATION ---
+        // --- START: BUG FIX ---
+        // Replace the hardcoded '1' with the actual sample count from the scene file.
+        let name = render_image_name(width, height, samples, aperture, focus);
+        // --- END: BUG FIX ---
+
+        // The image saving logic was slightly incorrect for PNG.
+        // .save() works directly on the RgbaImage.
+        rgba_img.save(&name).unwrap();
 
         println!("Saved → {name}");
         return;
