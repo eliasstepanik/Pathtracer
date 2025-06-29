@@ -12,11 +12,8 @@ mod sphere;
 mod tonemap;
 
 use crate::scene::load;
-use crate::{
-    algebra::{sample_disk, Vec3},
-    renderer::render_image_name,
-};
-use image::{Rgb, RgbImage, RgbaImage};
+use crate::renderer::render_image_name;
+use image::{Rgb, RgbImage};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::thread_rng;
 use rayon::prelude::*;

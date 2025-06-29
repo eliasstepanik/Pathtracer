@@ -1,5 +1,3 @@
-use crate::{algebra::Vec3, material::Material};
-
 #[derive(Clone)]
 pub enum Object {
     Sphere(crate::sphere::Sphere),

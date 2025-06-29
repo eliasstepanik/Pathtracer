@@ -57,7 +57,7 @@ fn detect_gpu_workload(adapter: &wgpu::Adapter) -> u64 {
     };
     // Use a fraction of the theoretical maximum to stay within driver limits
     let workload = invocations.saturating_mul(groups).saturating_mul(device_factor) / 2;
-    workload.clamp(10_000_000, 400_000_000)
+    workload.clamp(10_000_000, 40_000_000)
 }
 
 #[repr(C)]

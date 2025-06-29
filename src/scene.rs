@@ -3,9 +3,7 @@ use crate::{
     algebra::{option_vec3_from_array, vec3_from_array, Vec3},
     light::Light,
     material::Material,
-    mesh, plane,
     plane::Plane,
-    sphere,
     sphere::Sphere,
 };
 use serde::Deserialize;
