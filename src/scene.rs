@@ -1,7 +1,12 @@
 use crate::object::Object;
 use crate::{
-    algebra::vec3_from_array, algebra::Vec3, light::Light, material::Material, mesh, plane,
-    plane::Plane, sphere, sphere::Sphere,
+    algebra::{option_vec3_from_array, vec3_from_array, Vec3},
+    light::Light,
+    material::Material,
+    mesh, plane,
+    plane::Plane,
+    sphere,
+    sphere::Sphere,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -71,7 +76,12 @@ pub struct PlaneDesc {
 #[derive(Deserialize)]
 pub struct MeshDesc {
     pub name: String,
-    pub obj: String,
+    #[serde(alias = "obj", alias = "file")]
+    pub file: String,
+    #[serde(default, deserialize_with = "option_vec3_from_array")]
+    pub center: Option<Vec3>,
+    #[serde(default)]
+    pub radius: Option<f32>,
     pub mat: String,
     #[serde(default)]
     pub in_focus: bool,
@@ -167,10 +177,19 @@ pub fn load(path: &str) -> Scene {
             }
             ObjectJson::Mesh { mesh } => {
                 let material = *materials.get(&mesh.mat).unwrap_or(&default_mat);
-                let tris = crate::mesh::load_obj(&mesh.obj);
+                let tris = crate::mesh::load_obj(&mesh.file);
                 let triangles = tris
                     .into_iter()
-                    .map(|[v0, v1, v2]| {
+                    .map(|[mut v0, mut v1, mut v2]| {
+                        let radius = mesh.radius.unwrap_or(1.0);
+                        v0 = v0 * radius;
+                        v1 = v1 * radius;
+                        v2 = v2 * radius;
+                        if let Some(center) = mesh.center {
+                            v0 = v0 + center;
+                            v1 = v1 + center;
+                            v2 = v2 + center;
+                        }
                         let normal = (v1 - v0).cross(v2 - v0).normalize();
                         crate::mesh::Triangle { v0, v1, v2, normal }
                     })
