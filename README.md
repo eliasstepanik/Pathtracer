@@ -264,8 +264,8 @@ cargo run --release -- --gpu
 
 ![Glossy Metallic Spheres](render_7680x4320_s131072_ap0.02_f10.0_tzW1Af.png)
 
-- **Description:** Three metallic spheres with varying roughness.
-- **Settings:** 800x600 resolution, 256 samples per pixel.
+- **Description:** Two metallic spheres with varying roughness. As well as a glass sphere in the front.
+- **Settings:** 7680x4320 resolution, 131072 samples per pixel.
 
 
 ## Contributing
