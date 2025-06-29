@@ -63,6 +63,14 @@ where
     Ok(arr.into())
 }
 
+pub fn option_vec3_from_array<'de, D>(d: D) -> Result<Option<Vec3>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<[f32; 3]>::deserialize(d)?;
+    Ok(opt.map(Vec3::from))
+}
+
 /// concentric-disk sample (for depth-of-field)
 pub fn sample_disk(r: f32) -> (f32,f32) {
     let mut rng = rand::thread_rng();
