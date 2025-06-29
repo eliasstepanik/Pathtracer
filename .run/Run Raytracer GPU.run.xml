@@ -1,6 +1,6 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="Run Raytracer GPU" type="CargoCommandRunConfiguration" factoryName="Cargo Command" singleton="false">
-    <option name="buildProfileId" value="release" />
+    <option name="buildProfileId" value="dev" />
     <option name="command" value="run --package Raytracer --bin Raytracer -- --gpu -q" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <envs />

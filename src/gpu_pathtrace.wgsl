@@ -10,8 +10,6 @@ struct Sphere { center: vec4<f32>, color: vec4<f32>, radius: f32, metallic: f32,
 struct Plane { point: vec4<f32>, normal: vec4<f32>, u: vec4<f32>, v: vec4<f32>, color: vec4<f32>, metallic: f32, roughness: f32, ior: f32, _pad: f32 };
 struct Triangle { v0: vec4<f32>, v1: vec4<f32>, v2: vec4<f32>, color: vec4<f32>, metallic: f32, roughness: f32, ior: f32, _pad: f32 };
 
-// --- START: BUG FIX ---
-// The output buffer must match the data type the CPU expects for accumulation.
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<uniform> params: RenderParams;
 @group(0) @binding(2) var<uniform> light: Light;
@@ -19,7 +17,6 @@ struct Triangle { v0: vec4<f32>, v1: vec4<f32>, v2: vec4<f32>, color: vec4<f32>,
 @group(0) @binding(4) var<storage, read> planes: array<Plane>;
 @group(0) @binding(5) var<storage, read> triangles: array<Triangle>;
 @group(0) @binding(6) var<storage, read_write> output: array<vec4<f32>>;
-// --- END: BUG FIX ---
 
 struct Ray { origin: vec3<f32>, dir: vec3<f32> };
 struct Material { color: vec3<f32>, metallic: f32, roughness: f32, ior: f32 };
@@ -43,17 +40,23 @@ fn sample_hemisphere(n: vec3<f32>) -> vec3<f32> { let w = n; let u = normalize(a
 fn intersect_sphere(ray: Ray, s: Sphere, t_min: f32, t_max: f32) -> f32 { let oc = ray.origin - s.center.xyz; let a = dot(ray.dir, ray.dir); let b = 2.0 * dot(oc, ray.dir); let c = dot(oc, oc) - s.radius * s.radius; let disc = b * b - 4.0 * a * c; if (disc < 0.0) { return t_max; } let t = (-b - sqrt(disc)) / (2.0 * a); if (t > t_min && t < t_max) { return t; } let t2 = (-b + sqrt(disc)) / (2.0 * a); if (t2 > t_min && t2 < t_max) { return t2; } return t_max; }
 fn intersect_plane(ray: Ray, p: Plane, t_min: f32, t_max: f32) -> f32 { let denom = dot(p.normal.xyz, ray.dir); if (abs(denom) < 1e-6) { return t_max; } let t = dot(p.point.xyz - ray.origin, p.normal.xyz) / denom; if (t <= t_min || t >= t_max) { return t_max; } let hit_pos = ray.origin + ray.dir * t; let d = hit_pos - p.point.xyz; if (abs(dot(d, p.u.xyz)) > dot(p.u.xyz, p.u.xyz)) { return t_max; } if (abs(dot(d, p.v.xyz)) > dot(p.v.xyz, p.v.xyz)) { return t_max; } return t; }
 fn intersect_triangle(ray: Ray, tri: Triangle, t_min: f32, t_max: f32) -> f32 { let e1 = tri.v1.xyz - tri.v0.xyz; let e2 = tri.v2.xyz - tri.v0.xyz; let pvec = cross(ray.dir, e2); let det = dot(e1, pvec); if (abs(det) < 1e-6) { return t_max; } let inv_det = 1.0 / det; let tvec = ray.origin - tri.v0.xyz; let u = dot(tvec, pvec) * inv_det; if (u < 0.0 || u > 1.0) { return t_max; } let qvec = cross(tvec, e1); let v = dot(ray.dir, qvec) * inv_det; if (v < 0.0 || u + v > 1.0) { return t_max; } let t = dot(e2, qvec) * inv_det; if (t > t_min && t < t_max) { return t; } return t_max; }
-fn intersect_scene(ray: Ray) -> HitInfo { var hit: HitInfo; hit.t = 1e9; var closest = 1e9; for (var i = 0u; i < camera.sphere_count; i = i + 1u) { let s = spheres[i]; let t = intersect_sphere(ray, s, 0.001, closest); if (t < closest) { closest = t; hit.t = t; hit.pos = ray.origin + ray.dir * t; hit.normal = normalize(hit.pos - s.center.xyz); hit.mat.color = s.color.xyz; hit.mat.metallic = s.metallic; hit.mat.roughness = s.roughness; hit.mat.ior = s.ior; } } for (var i = 0u; i < camera.plane_count; i = i + 1u) { let p = planes[i]; let t = intersect_plane(ray, p, 0.001, closest); if (t < closest) { closest = t; hit.t = t; hit.pos = ray.origin + ray.dir * t; hit.normal = p.normal.xyz; hit.mat.color = p.color.xyz; hit.mat.metallic = p.metallic; hit.mat.roughness = p.roughness; hit.mat.ior = p.ior; } } for (var i = 0u; i < camera.triangle_count; i = i + 1u) { let tr = triangles[i]; let t = intersect_triangle(ray, tr, 0.001, closest); if (t < closest) { closest = t; hit.t = t; hit.pos = ray.origin + ray.dir * t; let n = normalize(cross(tr.v1.xyz - tr.v0.xyz, tr.v2.xyz - tr.v0.xyz)); hit.normal = n; hit.mat.color = tr.color.xyz; hit.mat.metallic = tr.metallic; hit.mat.roughness = tr.roughness; hit.mat.ior = tr.ior; } } return hit; }
+fn intersect_scene(ray: Ray) -> HitInfo { var hit: HitInfo; hit.t = 1e9; var closest = 1e9; for (var i = 0u; i < camera.sphere_count; i = i + 1u) { let s = spheres[i]; let t = intersect_sphere(ray, s, 0.001, closest); if (t < closest) { closest = t; hit.t = t; hit.pos = ray.origin + ray.dir * t; hit.normal = normalize(hit.pos - s.center.xyz); hit.mat.color = s.color.xyz; hit.mat.metallic = s.metallic; hit.mat.roughness = s.roughness; hit.mat.ior = s.ior; } } for (var i = 0u; i < camera.plane_count; i = i + 1u) { let p = planes[i]; let t = intersect_plane(ray, p, 0.001, closest); if (t < closest) { closest = t; hit.t = t; hit.pos = ray.origin + ray.dir * t; let hit_normal = p.normal.xyz; hit.normal = select(hit_normal, -hit_normal, dot(ray.dir, hit_normal) > 0.0); hit.mat.color = p.color.xyz; hit.mat.metallic = p.metallic; hit.mat.roughness = p.roughness; hit.mat.ior = p.ior; } } for (var i = 0u; i < camera.triangle_count; i = i + 1u) { let tr = triangles[i]; let t = intersect_triangle(ray, tr, 0.001, closest); if (t < closest) { closest = t; hit.t = t; hit.pos = ray.origin + ray.dir * t; let n = normalize(cross(tr.v1.xyz - tr.v0.xyz, tr.v2.xyz - tr.v0.xyz)); hit.normal = select(n, -n, dot(ray.dir, n) > 0.0); hit.mat.color = tr.color.xyz; hit.mat.metallic = tr.metallic; hit.mat.roughness = tr.roughness; hit.mat.ior = tr.ior; } } return hit; }
 
-fn direct_light_sample(hit_pos: vec3<f32>, hit_normal: vec3<f32>, mat: Material, v: vec3<f32>) -> vec3<f32> { var total_direct_light = vec3(0.0); for (var i = 0u; i < SHADOW_SAMPLES; i = i + 1u) { let lp = light.pos.xyz + light.u.xyz * (rand() - 0.5) + light.v.xyz * (rand() - 0.5); let lvec = lp - hit_pos; let dist = length(lvec); let l = lvec / dist; var shadow_ray: Ray; shadow_ray.origin = hit_pos + hit_normal * 0.0001; shadow_ray.dir = l; let shadow_hit = intersect_scene(shadow_ray); if (shadow_hit.t >= dist) { let n_dot_l = max(0.0, dot(hit_normal, l)); if (n_dot_l > 0.0) { let light_area = length(cross(light.u.xyz, light.v.xyz)); let light_normal = normalize(cross(light.u.xyz, light.v.xyz)); let cos_theta_light = max(0.0, dot(-l, light_normal)); let falloff = cos_theta_light / (dist * dist + 1.0); let h = normalize(v + l); let n_dot_v = max(1e-4, dot(hit_normal, v)); let n_dot_h = max(0.0, dot(hit_normal, h)); let v_dot_h = max(0.0, dot(v, h)); let f0 = mix(vec3(0.04), mat.color, mat.metallic); let f = fresnel_schlick(v_dot_h, f0); let d = d_term(n_dot_h, mat.roughness); let g = g_term(n_dot_v, n_dot_l, mat.roughness); let spec_numerator = f * d * g; let spec_denominator = 4.0 * n_dot_v * n_dot_l + 1e-6; let specular_brdf = spec_numerator / spec_denominator; let diffuse_color = mat.color * (1.0 - mat.metallic); let k_d = vec3(1.0) - f; let diffuse_brdf = diffuse_color * k_d / PI; let radiance = (diffuse_brdf + specular_brdf) * n_dot_l; total_direct_light += radiance * light.intensity.xyz * light_area * falloff; } } } return total_direct_light / f32(SHADOW_SAMPLES); }
-fn aces_film(c: vec3<f32>) -> vec3<f32> { let a = 2.51; let b = 0.03; let c2 = 2.43; let d = 0.59; let e = 0.14; let x = (c * (a * c + b)) / (c * (c2 * c + d) + e); return clamp(x, vec3(0.0), vec3(1.0)); }
+fn direct_light_sample(hit_pos: vec3<f32>, hit_normal: vec3<f32>, mat: Material, v: vec3<f32>) -> vec3<f32> { var total_direct_light = vec3(0.0); for (var i = 0u; i < SHADOW_SAMPLES; i = i + 1u) { let lp = light.pos.xyz + light.u.xyz * (rand() - 0.5) + light.v.xyz * (rand() - 0.5); let lvec = lp - hit_pos; let dist = length(lvec); let l = lvec / dist; var shadow_ray: Ray; shadow_ray.origin = hit_pos + hit_normal * 0.0001; shadow_ray.dir = l; let shadow_hit = intersect_scene(shadow_ray); if (shadow_hit.t >= dist) { let n_dot_l = max(0.0, dot(hit_normal, l)); if (n_dot_l > 0.0) { let light_area = length(cross(light.u.xyz, light.v.xyz)); let light_normal = normalize(cross(light.u.xyz, light.v.xyz)); let cos_theta_light = max(0.0, dot(-l, light_normal)); let falloff = cos_theta_light / (dist * dist + 1e-4); let h = normalize(v + l); let n_dot_v = max(1e-4, dot(hit_normal, v)); let n_dot_h = max(0.0, dot(hit_normal, h)); let v_dot_h = max(0.0, dot(v, h)); let f0 = mix(vec3(0.04), mat.color, mat.metallic); let f = fresnel_schlick(v_dot_h, f0); let d = d_term(n_dot_h, mat.roughness); let g = g_term(n_dot_v, n_dot_l, mat.roughness); let spec_numerator = f * d * g; let spec_denominator = 4.0 * n_dot_v * n_dot_l + 1e-6; let specular_brdf = spec_numerator / spec_denominator; let diffuse_color = mat.color * (1.0 - mat.metallic); let k_d = vec3(1.0) - f; let diffuse_brdf = diffuse_color * k_d / PI; let radiance = (diffuse_brdf + specular_brdf) * n_dot_l; total_direct_light += radiance * light.intensity.xyz * light_area * falloff; } } } return total_direct_light / f32(SHADOW_SAMPLES); }
+
+// --- START: BUG FIX ---
+// The main render loop has been completely rewritten to follow a correct
+// Next-Event-Estimation (NEE) path tracing algorithm.
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= camera.width || gid.y >= camera.height) { return; }
     init_rand(gid.xy, vec2(params.seed1, params.seed2));
-    var final_color = vec3(0.0);
+
+    var accumulated_color = vec3(0.0);
+
     for (var s = 0u; s < params.samples_per_pixel; s = s + 1u) {
+        // --- 1. Generate the initial ray for this sample path ---
         let aspect = f32(camera.width) / f32(camera.height);
         let scale = tan(radians(camera.fov) * 0.5);
         let right = camera.right.xyz;
@@ -67,21 +70,29 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         var current_ray: Ray;
         current_ray.origin = camera.pos.xyz + origin_offset;
         current_ray.dir = normalize(focal_pt - current_ray.origin);
+
+        var path_radiance = vec3(0.0);
         var throughput = vec3(1.0);
 
+        // --- 2. Trace the ray path, accumulating light ---
         for (var i = 0u; i < params.max_bounces; i = i + 1u) {
             let hit = intersect_scene(current_ray);
-            if (hit.t >= 1e9) { break; }
+            if (hit.t >= 1e9) {
+                // Hit the "sky", which is black in this scene. End the path.
+                break;
+            }
 
             let view_dir = -current_ray.dir;
 
             if (hit.mat.ior > 1.0 && hit.mat.metallic < 0.1) {
+                // --- Handle Dielectric (Glass) Material ---
+                // This material type only redirects the ray. It does not add light.
                 var hit_normal = hit.normal;
                 let cosi = dot(view_dir, hit_normal);
                 var etai = 1.0;
                 var etat = hit.mat.ior;
                 if (cosi < 0.0) {
-                    hit_normal = -hit_normal;
+                    hit_normal = -hit_normal; // Ensure normal faces the ray
                     etai = hit.mat.ior;
                     etat = 1.0;
                 }
@@ -89,48 +100,55 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let eta_ratio = etai / etat;
                 let r0 = pow((etai - etat) / (etai + etat), 2.0);
                 let reflectance = r0 + (1.0 - r0) * pow(1.0 - abs(cosi), 5.0);
+
                 if (rand() < reflectance) {
                     current_ray.dir = reflect(-view_dir, hit_normal);
                 } else {
                     let refract_dir = refract(-view_dir, hit_normal, eta_ratio);
                     if(dot(refract_dir, refract_dir) > 0.0) {
                         current_ray.dir = refract_dir;
-                    } else {
+                    } else { // Total Internal Reflection
                         current_ray.dir = reflect(-view_dir, hit_normal);
                     }
                 }
+                // Attenuate throughput by material color for a "thin glass" effect.
                 throughput *= hit.mat.color;
             } else {
-                let hit_normal = select(hit.normal, -hit.normal, dot(hit.normal, view_dir) < 0.0);
-                final_color += direct_light_sample(hit.pos, hit_normal, hit.mat, view_dir) * throughput;
+                // --- Handle Opaque (PBR) Material ---
+                // Add direct lighting contribution at this bounce.
+                path_radiance += direct_light_sample(hit.pos, hit.normal, hit.mat, view_dir) * throughput;
 
-                var next_dir: vec3<f32>;
+                // Bounce for indirect lighting.
                 let diffuse_chance = 1.0 - hit.mat.metallic;
                 if (rand() < diffuse_chance) {
-                    next_dir = sample_hemisphere(hit_normal);
+                    current_ray.dir = sample_hemisphere(hit.normal);
+                    // For cosine-weighted sampling, the BRDF * cos(theta) / pdf simplifies to just the albedo.
                     throughput *= hit.mat.color;
                 } else {
-                    let h = sample_ggx_h(hit_normal, hit.mat.roughness);
-                    next_dir = reflect(-view_dir, h);
+                    let h = sample_ggx_h(hit.normal, hit.mat.roughness);
+                    current_ray.dir = reflect(-view_dir, h);
                     let f0 = mix(vec3(0.04), hit.mat.color, hit.mat.metallic);
                     throughput *= fresnel_schlick(max(0.0, dot(h, view_dir)), f0);
                 }
-                current_ray.dir = next_dir;
             }
 
+            // --- 3. Russian Roulette to terminate paths probabilistically ---
             if (i > 1u) {
                 let p = max(throughput.x, max(throughput.y, throughput.z));
-                if (rand() > p) { break; }
+                if (rand() > p) {
+                    break;
+                }
                 throughput /= p;
             }
+
             current_ray.origin = hit.pos + current_ray.dir * 0.0001;
         }
+        accumulated_color += path_radiance;
     }
 
-    // --- START: BUG FIX ---
-    // The shader now returns the SUM of colors for its chunk of samples.
-    // The CPU will handle averaging, tonemapping, and gamma correction.
+    // --- 4. Write the final accumulated color for this chunk of samples ---
+    // The CPU will handle averaging across all chunks, tonemapping, and gamma.
     let index = gid.y * camera.width + gid.x;
-    output[index] = vec4(final_color, 1.0);
-    // --- END: BUG FIX ---
+    output[index] = vec4(accumulated_color, 1.0);
 }
+// --- END: BUG FIX ---
