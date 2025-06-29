@@ -210,7 +210,7 @@ Controls the rendering parameters.
 
 - `width`, `height`: Dimensions of the output image.
 - `samples`: Number of samples per pixel.
-- `gpu_workload` *(optional)*: Override the automatically detected GPU workload per dispatch. If omitted, the renderer chooses a value based on your GPU type.
+- `gpu_workload` *(optional)*: Override the automatically detected GPU workload per dispatch. If omitted, the renderer estimates a safe workload from your GPU's reported limits.
 
 ## Blender Integration
 

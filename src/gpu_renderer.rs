@@ -46,10 +46,18 @@ struct RenderParams {
 }
 
 fn detect_gpu_workload(adapter: &wgpu::Adapter) -> u64 {
-    match adapter.get_info().device_type {
-        DeviceType::Cpu => 10_000_000,
-        _ => 40_000_000,
-    }
+    let limits = adapter.limits();
+    let invocations = limits.max_compute_invocations_per_workgroup as u64;
+    let groups = limits.max_compute_workgroups_per_dimension as u64;
+    let device_factor = match adapter.get_info().device_type {
+        DeviceType::Cpu => 1,
+        DeviceType::IntegratedGpu => 2,
+        DeviceType::DiscreteGpu => 3,
+        _ => 2,
+    };
+    // Use a fraction of the theoretical maximum to stay within driver limits
+    let workload = invocations.saturating_mul(groups).saturating_mul(device_factor) / 2;
+    workload.clamp(10_000_000, 400_000_000)
 }
 
 #[repr(C)]
