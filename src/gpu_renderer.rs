@@ -42,11 +42,8 @@ struct RenderParams {
 
 fn detect_gpu_workload(adapter: &wgpu::Adapter) -> u64 {
     match adapter.get_info().device_type {
-        DeviceType::DiscreteGpu => 600_000_000,
-        DeviceType::IntegratedGpu => 40_000_000,
-        DeviceType::VirtualGpu => 40_000_000,
         DeviceType::Cpu => 10_000_000,
-        DeviceType::Other => 40_000_000,
+        _ => 40_000_000,
     }
 }
 

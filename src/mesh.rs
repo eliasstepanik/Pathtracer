@@ -63,31 +63,35 @@ pub fn load_obj(path: &str) -> Vec<[Vec3; 3]> {
     let data = std::fs::read_to_string(path).expect("obj file");
     let mut verts = Vec::new();
     let mut tris = Vec::new();
+
     for line in data.lines() {
-        if let Some(rest) = line.strip_prefix('v') {
-            if let Some(rest) = rest.strip_prefix(' ') {
-                let nums: Vec<f32> = rest
-                    .split_whitespace()
-                    .filter_map(|s| s.parse().ok())
-                    .collect();
+        let mut parts = line.split_whitespace();
+        match parts.next() {
+            Some("v") => {
+                let nums: Vec<f32> = parts.filter_map(|s| s.parse().ok()).collect();
                 if nums.len() >= 3 {
                     verts.push(Vec3(nums[0], nums[1], nums[2]));
                 }
             }
-        } else if let Some(rest) = line.strip_prefix('f') {
-            if let Some(rest) = rest.strip_prefix(' ') {
-                let idx: Vec<usize> = rest
-                    .split_whitespace()
+            Some("f") => {
+                let idx: Vec<usize> = parts
                     .filter_map(|s| s.split('/').next().unwrap_or("").parse::<usize>().ok())
                     .collect();
                 if idx.len() >= 3 {
-                    let v0 = verts[idx[0] - 1];
-                    let v1 = verts[idx[1] - 1];
-                    let v2 = verts[idx[2] - 1];
-                    tris.push([v0, v1, v2]);
+                    let first = idx[0] - 1;
+                    let mut prev = idx[1] - 1;
+                    for &i in &idx[2..] {
+                        let v0 = verts[first];
+                        let v1 = verts[prev];
+                        let v2 = verts[i - 1];
+                        tris.push([v0, v1, v2]);
+                        prev = i - 1;
+                    }
                 }
             }
+            _ => {}
         }
     }
+
     tris
 }
