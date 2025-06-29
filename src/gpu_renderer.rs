@@ -25,9 +25,9 @@ struct CameraUniform {
     fov: f32,
     sphere_count: u32,
     plane_count: u32,
+    triangle_count: u32,
     aperture: f32,
     focus_dist: f32,
-    _pad: u32,
 }
 
 #[repr(C)]
@@ -66,6 +66,20 @@ struct PlaneData {
     normal: [f32; 4],
     u: [f32; 4],
     v: [f32; 4],
+    color: [f32; 4],
+    metallic: f32,
+    roughness: f32,
+    ior: f32,
+    _pad: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct TriangleData {
+    v0: [f32; 4],
+    v1: [f32; 4],
+    v2: [f32; 4],
+    normal: [f32; 4],
     color: [f32; 4],
     metallic: f32,
     roughness: f32,
@@ -134,7 +148,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
         v: [light.v.0, light.v.1, light.v.2, 0.0],
     };
 
-    let (spheres, planes) = get_object_data(scene);
+    let (spheres, planes, tris) = get_object_data(scene);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Pathtrace Shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("gpu_pathtrace.wgsl").into()),
@@ -168,9 +182,9 @@ async fn render_async(scene: &Scene) -> RgbaImage {
                 .iter()
                 .filter(|p| p.u[0] != 0.0 || p.v[1] != 0.0)
                 .count() as u32,
+            triangle_count: tris.len() as u32,
             aperture: scene.camera.aperture,
             focus_dist,
-            _pad: 0,
         };
 
         // --- START: BUG FIX ---
@@ -185,6 +199,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
                 &light_uniform,
                 &spheres,
                 &planes,
+                &tris,
             );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -240,12 +255,14 @@ async fn render_async(scene: &Scene) -> RgbaImage {
 }
 
 // Helper function to keep the main loop cleaner by setting up buffers.
-fn get_object_data(scene: &Scene) -> (Vec<SphereData>, Vec<PlaneData>) {
+fn get_object_data(scene: &Scene) -> (Vec<SphereData>, Vec<PlaneData>, Vec<TriangleData>) {
     const MAX_SPHERES: usize = 32;
     const MAX_PLANES: usize = 32;
+    const MAX_TRIS: usize = 8192;
     let mut spheres = vec![SphereData::zeroed(); MAX_SPHERES];
     let mut planes = vec![PlaneData::zeroed(); MAX_PLANES];
-    let (mut scount, mut pcount) = (0, 0);
+    let mut tris = vec![TriangleData::zeroed(); MAX_TRIS];
+    let (mut scount, mut pcount, mut tcount) = (0, 0, 0);
     for obj in &scene.objects {
         match obj {
             Object::Sphere(s) if scount < MAX_SPHERES => {
@@ -283,10 +300,37 @@ fn get_object_data(scene: &Scene) -> (Vec<SphereData>, Vec<PlaneData>) {
                 };
                 pcount += 1;
             }
+            Object::Mesh(m) => {
+                for tri in &m.triangles {
+                    if tcount >= MAX_TRIS {
+                        break;
+                    }
+                    tris[tcount] = TriangleData {
+                        v0: [tri.v0.0, tri.v0.1, tri.v0.2, 0.0],
+                        v1: [tri.v1.0, tri.v1.1, tri.v1.2, 0.0],
+                        v2: [tri.v2.0, tri.v2.1, tri.v2.2, 0.0],
+                        normal: [tri.normal.0, tri.normal.1, tri.normal.2, 0.0],
+                        color: [
+                            m.material.color.0,
+                            m.material.color.1,
+                            m.material.color.2,
+                            0.0,
+                        ],
+                        metallic: m.material.metallic,
+                        roughness: m.material.roughness,
+                        ior: m.material.ior,
+                        _pad: 0.0,
+                    };
+                    tcount += 1;
+                }
+            }
             _ => {}
         }
     }
-    (spheres, planes)
+    spheres.truncate(scount);
+    planes.truncate(pcount);
+    tris.truncate(tcount);
+    (spheres, planes, tris)
 }
 
 // Helper to create the compute pipeline
@@ -351,6 +395,16 @@ fn create_compute_pipeline(
                 binding: 5,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 6,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: None,
@@ -381,6 +435,7 @@ fn create_dispatch_resources(
     light_uniform: &LightUniform,
     spheres: &[SphereData],
     planes: &[PlaneData],
+    triangles: &[TriangleData],
 ) -> (wgpu::BindGroup, wgpu::Buffer, wgpu::Buffer, u64) {
     let cam_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Camera"),
@@ -405,6 +460,11 @@ fn create_dispatch_resources(
     let plane_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Planes"),
         contents: bytemuck::cast_slice(planes),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let tri_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Triangles"),
+        contents: bytemuck::cast_slice(triangles),
         usage: wgpu::BufferUsages::STORAGE,
     });
     let output_buffer_size = (cam.width * cam.height * 16) as wgpu::BufferAddress;
@@ -447,6 +507,10 @@ fn create_dispatch_resources(
             },
             wgpu::BindGroupEntry {
                 binding: 5,
+                resource: tri_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
                 resource: output_buffer.as_entire_binding(),
             },
         ],
