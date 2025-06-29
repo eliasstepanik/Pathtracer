@@ -9,6 +9,7 @@ mod renderer;
 mod gpu_renderer;
 mod plane;
 mod sphere;
+mod mesh;
 
 use std::{env, fs};
 use std::path::Path;
@@ -76,6 +77,11 @@ fn main() {
             crate::object::Object::Plane(p) => {
                 println!(" [{}] Plane '{}' {{ point: {:?}, normal: {:?}, mat_color: {:?} }}",
                          i, p.name, p.point, p.normal, p.material.color);
+            }
+            crate::object::Object::Mesh(m) => {
+                let col = m.triangles.first().map(|t| t.material.color).unwrap_or(Vec3(0.0,0.0,0.0));
+                println!(" [{}] Mesh '{}' {{ triangles: {}, mat_color: {:?} }}",
+                         i, m.name, m.triangles.len(), col);
             }
         }
     }

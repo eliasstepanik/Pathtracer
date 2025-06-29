@@ -12,6 +12,7 @@ pub fn render(scene: &Scene) -> RgbaImage {
     pollster::block_on(render_async(scene))
 }
 
+
 // All structs are defined once at the top for clarity.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -25,9 +26,10 @@ struct CameraUniform {
     fov: f32,
     sphere_count: u32,
     plane_count: u32,
+    triangle_count: u32,
     aperture: f32,
     focus_dist: f32,
-    _pad: u32,
+    _pad: [u32; 4],
 }
 
 #[repr(C)]
@@ -73,45 +75,57 @@ struct PlaneData {
     _pad: f32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct TriangleData {
+    v0: [f32;4],
+    v1: [f32;4],
+    v2: [f32;4],
+    color: [f32;4],
+    metallic: f32,
+    roughness: f32,
+    ior: f32,
+    _pad: f32,
+}
+
 async fn render_async(scene: &Scene) -> RgbaImage {
     let instance = wgpu::Instance::default();
     let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions::default()).await.expect("Failed to find GPU adapter");
     let (device, queue) = adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("Device"),
-            features: wgpu::Features::empty(),
-            limits: adapter.limits(),
-        },
+        &wgpu::DeviceDescriptor { label: Some("Device"), features: wgpu::Features::empty(), limits: adapter.limits(), },
         None,
     ).await.expect("Failed to create device");
 
     let width = scene.render.width;
     let height = scene.render.height;
-
-    // --- Progressive Render Setup ---
     let total_samples = scene.render.samples;
-
-    let target_workload_per_dispatch: u64 = 500_000_000;
+    let target_workload_per_dispatch: u64 = 30_000_000;
     let pixels = (width * height) as u64;
-
-
-    let mut samples_per_dispatch = (target_workload_per_dispatch / pixels.max(1)) as u32;
-    samples_per_dispatch = samples_per_dispatch.max(1).min(total_samples);
-
-
+    let mut samples_per_dispatch = ((target_workload_per_dispatch / pixels.max(1)) as u32).max(1).min(total_samples);
     let num_dispatches = (total_samples + samples_per_dispatch - 1) / samples_per_dispatch;
-
-    let mut accumulated_color = vec![[0.0f32; 4]; (width * height) as usize];
-    let mut rng = rand::thread_rng();
 
     println!("Starting progressive render: {} dispatches of {} samples each for a total of {} samples/pixel.", num_dispatches, samples_per_dispatch, total_samples);
 
-    // --- Pre-computation ---
+    // --- START: CORRECTED RESOURCE MANAGEMENT ---
+
+    // --- 1. Pre-computation and Data Setup (as before) ---
     let forward = (scene.camera.look_at - scene.camera.pos).normalize();
     let right = scene.camera.up.cross(forward).normalize();
     let up = right.cross(forward);
     let focus_dist = crate::renderer::autofocus(scene.camera.pos, right, up, forward, width as f32 / height as f32, (scene.camera.fov.to_radians() * 0.5).tan(), width, height, &scene.objects);
+    let (spheres, planes, tris, tri_count) = get_object_data(scene);
 
+    let cam = CameraUniform {
+        pos: [scene.camera.pos.0, scene.camera.pos.1, scene.camera.pos.2, 0.0],
+        forward: [forward.0, forward.1, forward.2, 0.0],
+        up: [up.0, up.1, up.2, 0.0],
+        right: [right.0, right.1, right.2, 0.0],
+        width, height, fov: scene.camera.fov,
+        sphere_count: spheres.iter().filter(|s| s.radius > 0.0).count() as u32,
+        plane_count: planes.iter().filter(|p| p.u[0] != 0.0 || p.v[1] != 0.0).count() as u32,
+        triangle_count: tri_count as u32,
+        aperture: scene.camera.aperture, focus_dist, _pad: [0; 4],
+    };
 
     let light = scene.lights.get(0).expect("Scene needs at least one light");
     let light_uniform = LightUniform {
@@ -121,53 +135,83 @@ async fn render_async(scene: &Scene) -> RgbaImage {
         v: [light.v.0, light.v.1, light.v.2, 0.0],
     };
 
-    let (spheres, planes) = get_object_data(scene);
+    // --- 2. Create ALL buffers ONCE before the loop ---
+    let cam_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("Camera"), contents: bytemuck::bytes_of(&cam), usage: wgpu::BufferUsages::UNIFORM });
+    let light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("Light"), contents: bytemuck::bytes_of(&light_uniform), usage: wgpu::BufferUsages::UNIFORM });
+    let sphere_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("Spheres"), contents: bytemuck::cast_slice(&spheres), usage: wgpu::BufferUsages::STORAGE });
+    let plane_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("Planes"), contents: bytemuck::cast_slice(&planes), usage: wgpu::BufferUsages::STORAGE });
+    let tri_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("Tris"), contents: bytemuck::cast_slice(&tris), usage: wgpu::BufferUsages::STORAGE });
+
+    // The params buffer is the only one we'll update. It needs COPY_DST usage.
+    let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Params"),
+        size: std::mem::size_of::<RenderParams>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let output_buffer_size = (width * height * 16) as wgpu::BufferAddress;
+    let output_buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("Output"), size: output_buffer_size, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
+    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("Staging"), size: output_buffer_size, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+
+    // --- 3. Create pipeline and persistent bind group ONCE ---
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("Pathtrace Shader"), source: wgpu::ShaderSource::Wgsl(include_str!("gpu_pathtrace.wgsl").into())});
     let pipeline = create_compute_pipeline(&device, &shader);
 
-    // --- Progressive Render Loop ---
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Bind Group"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: cam_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: params_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 2, resource: light_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 3, resource: sphere_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 4, resource: plane_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 5, resource: tri_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 6, resource: output_buffer.as_entire_binding() },
+        ],
+    });
+
+    // --- END: CORRECTED RESOURCE MANAGEMENT ---
+
+    let mut accumulated_color = vec![[0.0f32; 4]; (width * height) as usize];
+    let mut rng = rand::thread_rng();
+
     for i in 0..num_dispatches {
+        // Inside the loop, we ONLY update the data that changes.
         let params = RenderParams {
             samples_per_pixel: samples_per_dispatch,
             max_bounces: 12,
             seed1: rng.gen(),
             seed2: rng.gen(),
         };
+        // Use `queue.write_buffer` to efficiently update the GPU buffer without recreating it.
+        queue.write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
 
-
-        let cam = CameraUniform {
-            pos: [scene.camera.pos.0, scene.camera.pos.1, scene.camera.pos.2, 0.0],
-            forward: [forward.0, forward.1, forward.2, 0.0],
-            up: [up.0, up.1, up.2, 0.0], // Send the correct up vector
-            right: [right.0, right.1, right.2, 0.0],
-            width, height, fov: scene.camera.fov,
-            sphere_count: spheres.iter().filter(|s| s.radius > 0.0).count() as u32,
-            plane_count: planes.iter().filter(|p| p.u[0] != 0.0 || p.v[1] != 0.0).count() as u32,
-            aperture: scene.camera.aperture, focus_dist, _pad: 0,
-        };
-
-        // --- START: BUG FIX ---
-        // Instead of a flawed helper trait, we create the resources and hold onto
-        // the output_buffer directly.
-        let (bind_group, staging_buffer, output_buffer, output_buffer_size) = create_dispatch_resources(&device, &pipeline, &cam,&params, &light_uniform, &spheres, &planes);
-
+        // Now, we just encode the commands using the persistent resources.
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Encoder") });
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("Compute Pass") });
             cpass.set_pipeline(&pipeline);
-            cpass.set_bind_group(0, &bind_group, &[]);
+            cpass.set_bind_group(0, &bind_group, &[]); // Use the persistent bind group
             cpass.dispatch_workgroups((width + 7)/8, (height + 7)/8, 1);
         }
-        // Now we use our direct reference to the output_buffer.
         encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, output_buffer_size);
-        // --- END: BUG FIX ---
 
-        queue.submit(Some(encoder.finish()));
+        // Submit the work and get an index to track it.
+        let submission_index = queue.submit(Some(encoder.finish()));
 
+        // Map the staging buffer to read the results back.
         let buffer_slice = staging_buffer.slice(..);
         let (tx, rx) = futures_intrusive::channel::shared::oneshot_channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |v| tx.send(v).unwrap());
-        device.poll(wgpu::Maintain::Wait);
+
+        // This is the most crucial change:
+        // Instead of a generic `device.poll(wgpu::Maintain::Wait)`, which can cause deadlocks,
+        // we explicitly wait for the specific submission we just made to be processed by the GPU.
+        device.poll(wgpu::Maintain::WaitForSubmissionIndex(submission_index));
+
+        // Now it's safe to wait for the mapping to complete.
         rx.receive().await.unwrap().expect("map failed");
 
         let data = buffer_slice.get_mapped_range();
@@ -182,7 +226,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
         println!("Dispatch {}/{} complete.", i + 1, num_dispatches);
     }
 
-    // --- Final Image Creation ---
+    // --- Final Image Creation (unchanged) ---
     let mut img = RgbaImage::new(width, height);
     for (i, pixel_data) in accumulated_color.iter().enumerate() {
         let x = (i as u32) % width;
@@ -200,12 +244,14 @@ async fn render_async(scene: &Scene) -> RgbaImage {
 }
 
 // Helper function to keep the main loop cleaner by setting up buffers.
-fn get_object_data(scene: &Scene) -> (Vec<SphereData>, Vec<PlaneData>) {
+fn get_object_data(scene: &Scene) -> (Vec<SphereData>, Vec<PlaneData>, Vec<TriangleData>, usize) {
     const MAX_SPHERES: usize = 32;
     const MAX_PLANES: usize = 32;
+    const MAX_TRIANGLES: usize = 4096;
     let mut spheres = vec![SphereData::zeroed(); MAX_SPHERES];
     let mut planes = vec![PlaneData::zeroed(); MAX_PLANES];
-    let (mut scount, mut pcount) = (0, 0);
+    let mut tris = vec![TriangleData::zeroed(); MAX_TRIANGLES];
+    let (mut scount, mut pcount, mut tcount) = (0, 0, 0);
     for obj in &scene.objects {
         match obj {
             Object::Sphere(s) if scount < MAX_SPHERES => {
@@ -216,10 +262,34 @@ fn get_object_data(scene: &Scene) -> (Vec<SphereData>, Vec<PlaneData>) {
                 planes[pcount] = PlaneData { point: [p.point.0, p.point.1, p.point.2, 0.0], normal: [p.normal.0, p.normal.1, p.normal.2, 0.0], u: [p.u.0, p.u.1, p.u.2, 0.0], v: [p.v.0, p.v.1, p.v.2, 0.0], color: [p.material.color.0, p.material.color.1, p.material.color.2, 0.0], metallic: p.material.metallic, roughness: p.material.roughness, ior: p.material.ior, _pad: 0.0 };
                 pcount += 1;
             }
+            Object::Mesh(m) => {
+                for tri in &m.triangles {
+                    if tcount >= MAX_TRIANGLES { break; }
+                    tris[tcount] = TriangleData {
+                        v0: [tri.v0.0, tri.v0.1, tri.v0.2, 0.0],
+                        v1: [tri.v1.0, tri.v1.1, tri.v1.2, 0.0],
+                        v2: [tri.v2.0, tri.v2.1, tri.v2.2, 0.0],
+                        color: [tri.material.color.0, tri.material.color.1, tri.material.color.2, 0.0],
+                        metallic: tri.material.metallic,
+                        roughness: tri.material.roughness,
+                        ior: tri.material.ior,
+                        _pad: 0.0,
+                    };
+                    tcount += 1;
+                }
+            }
             _ => {}
         }
     }
-    (spheres, planes)
+    // Avoid creating an empty buffer which triggers a validation error in wgpu
+    if tcount == 0 {
+        // Keep one dummy entry so the storage buffer is non-empty
+        tris.truncate(1);
+        tcount = 1;
+    } else {
+        tris.truncate(tcount);
+    }
+    (spheres, planes, tris, tcount)
 }
 
 // Helper to create the compute pipeline
@@ -232,7 +302,8 @@ fn create_compute_pipeline(device: &wgpu::Device, shader: &wgpu::ShaderModule) -
             wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer{ ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
             wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer{ ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
             wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer{ ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
-            wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer{ ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer{ ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+            wgpu::BindGroupLayoutEntry { binding: 6, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer{ ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None }, count: None },
         ],
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("Pipeline Layout"), bind_group_layouts: &[&bind_group_layout], push_constant_ranges: &[]});
@@ -248,12 +319,14 @@ fn create_dispatch_resources(
     light_uniform: &LightUniform,
     spheres: &[SphereData],
     planes: &[PlaneData],
+    tris: &[TriangleData],
 ) -> (wgpu::BindGroup, wgpu::Buffer, wgpu::Buffer, u64) {
     let cam_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("Camera"), contents: bytemuck::bytes_of(cam), usage: wgpu::BufferUsages::UNIFORM });
     let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("Params"), contents: bytemuck::bytes_of(params), usage: wgpu::BufferUsages::UNIFORM });
     let light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("Light"), contents: bytemuck::bytes_of(light_uniform), usage: wgpu::BufferUsages::UNIFORM });
     let sphere_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("Spheres"), contents: bytemuck::cast_slice(spheres), usage: wgpu::BufferUsages::STORAGE });
     let plane_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("Planes"), contents: bytemuck::cast_slice(planes), usage: wgpu::BufferUsages::STORAGE });
+    let tri_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: Some("Tris"), contents: bytemuck::cast_slice(tris), usage: wgpu::BufferUsages::STORAGE });
     let output_buffer_size = (cam.width * cam.height * 16) as wgpu::BufferAddress;
     let output_buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("Output"), size: output_buffer_size, usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false });
     let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("Staging"), size: output_buffer_size, usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
@@ -267,7 +340,8 @@ fn create_dispatch_resources(
             wgpu::BindGroupEntry { binding: 2, resource: light_buffer.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 3, resource: sphere_buffer.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 4, resource: plane_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 5, resource: output_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 5, resource: tri_buffer.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 6, resource: output_buffer.as_entire_binding() },
         ],
     });
 

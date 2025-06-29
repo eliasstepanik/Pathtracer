@@ -1,6 +1,8 @@
 use serde::Deserialize;
 use std::collections::HashMap;
-use crate::{algebra::Vec3, material::Material, plane::Plane, sphere::Sphere, light::Light, algebra::vec3_from_array, sphere, plane};
+use crate::{algebra::Vec3, material::Material, plane::Plane, sphere::Sphere, light::Light, algebra::vec3_from_array};
+use crate::mesh::{Mesh, Triangle};
+use tobj;
 use crate::object::Object;
 
 #[derive(Deserialize)]
@@ -34,6 +36,7 @@ pub struct RenderJson { pub width:u32, pub height:u32, pub samples:u32 }
 enum ObjectJson {
     Sphere{ sphere: SphereDesc },
     Plane { plane : PlaneDesc  },
+    Mesh  { mesh  : MeshDesc   },
 }
 
 #[derive(Deserialize)]
@@ -57,6 +60,15 @@ pub struct PlaneDesc {
     pub v:      Vec3,
     pub mat   : String,
     #[serde(default)] // Default to false if not present in JSON
+    pub in_focus: bool,
+}
+
+#[derive(Deserialize)]
+pub struct MeshDesc {
+    pub name: String,
+    pub file: String,
+    pub mat: String,
+    #[serde(default)]
     pub in_focus: bool,
 }
 
@@ -144,8 +156,38 @@ pub fn load(path:&str) -> Scene {
                     v:        plane.v,
                     normal,
                     material,
-                    in_focus: plane.in_focus, // ADDED
+                    in_focus: plane.in_focus,
                 }));
+            }
+            ObjectJson::Mesh { mesh } => {
+                let material = *materials.get(&mesh.mat).unwrap_or(&default_mat);
+                let mut triangles = Vec::new();
+                let (models, _mats) = tobj::load_obj(&mesh.file, &tobj::LoadOptions::default()).expect("load obj");
+                for m in models {
+                    let mesh_data = &m.mesh;
+                    for idx in (0..mesh_data.indices.len()).step_by(3) {
+                        let i0 = mesh_data.indices[idx] as usize;
+                        let i1 = mesh_data.indices[idx+1] as usize;
+                        let i2 = mesh_data.indices[idx+2] as usize;
+                        let p0 = Vec3(
+                            mesh_data.positions[3*i0],
+                            mesh_data.positions[3*i0+1],
+                            mesh_data.positions[3*i0+2],
+                        );
+                        let p1 = Vec3(
+                            mesh_data.positions[3*i1],
+                            mesh_data.positions[3*i1+1],
+                            mesh_data.positions[3*i1+2],
+                        );
+                        let p2 = Vec3(
+                            mesh_data.positions[3*i2],
+                            mesh_data.positions[3*i2+1],
+                            mesh_data.positions[3*i2+2],
+                        );
+                        triangles.push(Triangle { v0:p0, v1:p1, v2:p2, material });
+                    }
+                }
+                objects.push(Object::Mesh(Mesh { name: mesh.name, triangles, in_focus: mesh.in_focus }));
             }
         }
     }
