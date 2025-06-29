@@ -254,7 +254,9 @@ fn get_object_data(scene: &Scene) -> (Vec<SphereData>, Vec<PlaneData>, Vec<Trian
     }
     // Avoid creating an empty buffer which triggers a validation error in wgpu
     if tcount == 0 {
+        // Keep one dummy entry so the storage buffer is non-empty
         tris.truncate(1);
+        tcount = 1;
     } else {
         tris.truncate(tcount);
     }
