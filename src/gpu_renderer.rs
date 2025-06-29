@@ -330,6 +330,16 @@ fn get_object_data(scene: &Scene) -> (Vec<SphereData>, Vec<PlaneData>, Vec<Trian
     spheres.truncate(scount);
     planes.truncate(pcount);
     tris.truncate(tcount);
+
+    if spheres.is_empty() {
+        spheres.push(SphereData::zeroed());
+    }
+    if planes.is_empty() {
+        planes.push(PlaneData::zeroed());
+    }
+    if tris.is_empty() {
+        tris.push(TriangleData::zeroed());
+    }
     (spheres, planes, tris)
 }
 
