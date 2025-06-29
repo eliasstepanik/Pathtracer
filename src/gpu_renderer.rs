@@ -12,6 +12,7 @@ pub fn render(scene: &Scene) -> RgbaImage {
     pollster::block_on(render_async(scene))
 }
 
+
 // All structs are defined once at the top for clarity.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -28,7 +29,7 @@ struct CameraUniform {
     triangle_count: u32,
     aperture: f32,
     focus_dist: f32,
-    _pad: u32,
+    _pad: [u32; 4],
 }
 
 #[repr(C)]
@@ -148,18 +149,20 @@ async fn render_async(scene: &Scene) -> RgbaImage {
             seed2: rng.gen(),
         };
 
-
         let cam = CameraUniform {
             pos: [scene.camera.pos.0, scene.camera.pos.1, scene.camera.pos.2, 0.0],
             forward: [forward.0, forward.1, forward.2, 0.0],
-            up: [up.0, up.1, up.2, 0.0], // Send the correct up vector
+            up: [up.0, up.1, up.2, 0.0],
             right: [right.0, right.1, right.2, 0.0],
             width, height, fov: scene.camera.fov,
             sphere_count: spheres.iter().filter(|s| s.radius > 0.0).count() as u32,
             plane_count: planes.iter().filter(|p| p.u[0] != 0.0 || p.v[1] != 0.0).count() as u32,
             triangle_count: tri_count as u32,
-            aperture: scene.camera.aperture, focus_dist, _pad: 0,
+            aperture: scene.camera.aperture,
+            focus_dist,
+            _pad: [0; 4],
         };
+
 
         // --- START: BUG FIX ---
         // Instead of a flawed helper trait, we create the resources and hold onto

@@ -3,7 +3,7 @@
 const PI: f32 = 3.1415926535;
 const SHADOW_SAMPLES: u32 = 4u;
 
-struct Camera { pos: vec4<f32>, forward: vec4<f32>, up: vec4<f32>, right: vec4<f32>, width: u32, height: u32, fov: f32, sphere_count: u32, plane_count: u32, triangle_count: u32, aperture: f32, focus_dist: f32, _pad: u32 };
+struct Camera {pos: vec4<f32>,forward: vec4<f32>,up: vec4<f32>,right: vec4<f32>,width: u32,height: u32,fov: f32,sphere_count: u32,plane_count: u32,triangle_count: u32,aperture: f32,focus_dist: f32,_pad: vec4<u32>};
 struct RenderParams { samples_per_pixel: u32, max_bounces: u32, seed1: u32, seed2: u32 };
 struct Light { pos: vec4<f32>, intensity: vec4<f32>, u: vec4<f32>, v: vec4<f32> };
 struct Sphere { center: vec4<f32>, color: vec4<f32>, radius: f32, metallic: f32, roughness: f32, ior: f32 };
