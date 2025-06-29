@@ -195,6 +195,21 @@ async fn render_async(scene: &Scene) -> RgbaImage {
     let pipeline = create_compute_pipeline(&device, &shader);
 
     // --- Progressive Render Loop ---
+    // Create the output and staging buffers once and reuse them for all dispatches
+    let output_buffer_size = (width * height * 16) as wgpu::BufferAddress;
+    let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Output"),
+        size: output_buffer_size,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Staging"),
+        size: output_buffer_size,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
     for i in 0..num_dispatches {
         let params = RenderParams {
             samples_per_pixel: samples_per_dispatch,
@@ -226,8 +241,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
         // --- START: BUG FIX ---
         // Instead of a flawed helper trait, we create the resources and hold onto
         // the output_buffer directly.
-        let (bind_group, staging_buffer, output_buffer, output_buffer_size) =
-            create_dispatch_resources(
+        let bind_group = create_dispatch_resources(
                 &device,
                 &pipeline,
                 &cam,
@@ -236,6 +250,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
                 &spheres,
                 &planes,
                 &tris,
+                &output_buffer,
             );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -498,7 +513,8 @@ fn create_dispatch_resources(
     spheres: &[SphereData],
     planes: &[PlaneData],
     triangles: &[TriangleData],
-) -> (wgpu::BindGroup, wgpu::Buffer, wgpu::Buffer, u64) {
+    output_buffer: &wgpu::Buffer,
+) -> wgpu::BindGroup {
     let cam_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Camera"),
         contents: bytemuck::bytes_of(cam),
@@ -528,19 +544,6 @@ fn create_dispatch_resources(
         label: Some("Triangles"),
         contents: bytemuck::cast_slice(triangles),
         usage: wgpu::BufferUsages::STORAGE,
-    });
-    let output_buffer_size = (cam.width * cam.height * 16) as wgpu::BufferAddress;
-    let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Output"),
-        size: output_buffer_size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("Staging"),
-        size: output_buffer_size,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
     });
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -578,10 +581,5 @@ fn create_dispatch_resources(
         ],
     });
 
-    (
-        bind_group,
-        staging_buffer,
-        output_buffer,
-        output_buffer_size,
-    )
+    bind_group
 }
