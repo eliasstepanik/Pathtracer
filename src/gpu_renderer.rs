@@ -135,7 +135,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
         v: [light.v.0, light.v.1, light.v.2, 0.0],
     };
 
-    let (spheres, planes, tris) = get_object_data(scene);
+    let (spheres, planes, tris, tri_count) = get_object_data(scene);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("Pathtrace Shader"), source: wgpu::ShaderSource::Wgsl(include_str!("gpu_pathtrace.wgsl").into())});
     let pipeline = create_compute_pipeline(&device, &shader);
 
@@ -157,7 +157,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
             width, height, fov: scene.camera.fov,
             sphere_count: spheres.iter().filter(|s| s.radius > 0.0).count() as u32,
             plane_count: planes.iter().filter(|p| p.u[0] != 0.0 || p.v[1] != 0.0).count() as u32,
-            triangle_count: tris.len() as u32,
+            triangle_count: tri_count as u32,
             aperture: scene.camera.aperture, focus_dist, _pad: 0,
         };
 
@@ -215,7 +215,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
 }
 
 // Helper function to keep the main loop cleaner by setting up buffers.
-fn get_object_data(scene: &Scene) -> (Vec<SphereData>, Vec<PlaneData>, Vec<TriangleData>) {
+fn get_object_data(scene: &Scene) -> (Vec<SphereData>, Vec<PlaneData>, Vec<TriangleData>, usize) {
     const MAX_SPHERES: usize = 32;
     const MAX_PLANES: usize = 32;
     const MAX_TRIANGLES: usize = 4096;
@@ -252,8 +252,13 @@ fn get_object_data(scene: &Scene) -> (Vec<SphereData>, Vec<PlaneData>, Vec<Trian
             _ => {}
         }
     }
-    tris.truncate(tcount);
-    (spheres, planes, tris)
+    // Avoid creating an empty buffer which triggers a validation error in wgpu
+    if tcount == 0 {
+        tris.truncate(1);
+    } else {
+        tris.truncate(tcount);
+    }
+    (spheres, planes, tris, tcount)
 }
 
 // Helper to create the compute pipeline
