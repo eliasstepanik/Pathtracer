@@ -204,12 +204,14 @@ Controls the rendering parameters.
 "render": {
   "width": 800,
   "height": 600,
-  "samples": 128
+  "samples": 128,
+  "gpu_workload": 40000000
 }
 ```
 
 - `width`, `height`: Dimensions of the output image.
 - `samples`: Number of samples per pixel.
+- `gpu_workload`: Maximum GPU workload per dispatch. Lower values reduce GPU usage if your driver is unstable.
 
 ## Blender Integration
 

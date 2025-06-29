@@ -21,7 +21,8 @@
     "render": {
         "width": 800,
         "height": 600,
-        "samples": 256
+        "samples": 256,
+        "gpu_workload": 40000000
     },
     "materials": {
         "Glass.006": {

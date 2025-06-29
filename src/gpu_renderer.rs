@@ -111,7 +111,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
     // --- Progressive Render Setup ---
     let total_samples = scene.render.samples;
 
-    let target_workload_per_dispatch: u64 = 40_000_000;
+    let target_workload_per_dispatch: u64 = scene.render.gpu_workload;
     let pixels = (width * height) as u64;
 
     let mut samples_per_dispatch = (target_workload_per_dispatch / pixels.max(1)) as u32;
