@@ -5,6 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use image::RgbaImage;
 use rand::Rng;
 use wgpu::util::DeviceExt;
+use wgpu::DeviceType;
 
 // The public-facing function signature must now be mutable to allow updating the scene's internal state if needed.
 // For now, we only read from it, but this is good practice for future features.
@@ -37,6 +38,16 @@ struct RenderParams {
     max_bounces: u32,
     seed1: u32,
     seed2: u32,
+}
+
+fn detect_gpu_workload(adapter: &wgpu::Adapter) -> u64 {
+    match adapter.get_info().device_type {
+        DeviceType::DiscreteGpu => 600_000_000,
+        DeviceType::IntegratedGpu => 40_000_000,
+        DeviceType::VirtualGpu => 40_000_000,
+        DeviceType::Cpu => 10_000_000,
+        DeviceType::Other => 40_000_000,
+    }
 }
 
 #[repr(C)]
@@ -111,7 +122,11 @@ async fn render_async(scene: &Scene) -> RgbaImage {
     // --- Progressive Render Setup ---
     let total_samples = scene.render.samples;
 
-    let target_workload_per_dispatch: u64 = scene.render.gpu_workload;
+    let target_workload_per_dispatch: u64 = scene
+        .render
+        .gpu_workload
+        .unwrap_or_else(|| detect_gpu_workload(&adapter));
+    println!("Target workload per dispatch: {}", target_workload_per_dispatch);
     let pixels = (width * height) as u64;
 
     let mut samples_per_dispatch = (target_workload_per_dispatch / pixels.max(1)) as u32;

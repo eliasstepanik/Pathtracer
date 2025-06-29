@@ -27,12 +27,8 @@ pub struct RenderJson {
     pub width: u32,
     pub height: u32,
     pub samples: u32,
-    #[serde(default = "default_gpu_workload")]
-    pub gpu_workload: u64,
-}
-
-fn default_gpu_workload() -> u64 {
-    40_000_000
+    #[serde(default)]
+    pub gpu_workload: Option<u64>,
 }
 
 #[derive(Deserialize)]
