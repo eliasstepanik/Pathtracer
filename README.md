@@ -259,25 +259,14 @@ cargo run --release -- --gpu
 - GPU rendering can significantly speed up rendering times.
 - Ensure that your system's GPU drivers are up to date.
 
-## Examples
 
-Here are some example renders created with this path tracer:
+### Example
 
-### Example 1: Glossy Metallic Spheres
-
-![Glossy Metallic Spheres](examples/glossy_spheres.png)
+![Glossy Metallic Spheres](render_7680x4320_s131072_ap0.02_f10.0_tzW1Af.png)
 
 - **Description:** Three metallic spheres with varying roughness.
 - **Settings:** 800x600 resolution, 256 samples per pixel.
 
-### Example 2: Glass Refraction
-
-![Glass Refraction](examples/glass_refraction.png)
-
-- **Description:** Glass sphere demonstrating refraction and caustics.
-- **Settings:** 1024x768 resolution, 512 samples per pixel.
-
-*Note: Place your example images in an `examples` directory and reference them in the README.*
 
 ## Contributing
 
