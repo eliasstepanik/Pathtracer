@@ -7,6 +7,11 @@ use rand::Rng;
 use wgpu::util::DeviceExt;
 use wgpu::DeviceType;
 
+/// Workgroup dimensions used in the compute shader. Keep these in sync with
+/// `@workgroup_size` in `gpu_pathtrace.wgsl`.
+const WORKGROUP_SIZE_X: u32 = 8;
+const WORKGROUP_SIZE_Y: u32 = 8;
+
 // The public-facing function signature must now be mutable to allow updating the scene's internal state if needed.
 // For now, we only read from it, but this is good practice for future features.
 pub fn render(scene: &Scene) -> RgbaImage {
@@ -221,7 +226,9 @@ async fn render_async(scene: &Scene) -> RgbaImage {
             });
             cpass.set_pipeline(&pipeline);
             cpass.set_bind_group(0, &bind_group, &[]);
-            cpass.dispatch_workgroups((width + 7) / 8, (height + 7) / 8, 1);
+            let dispatch_x = (width + WORKGROUP_SIZE_X - 1) / WORKGROUP_SIZE_X;
+            let dispatch_y = (height + WORKGROUP_SIZE_Y - 1) / WORKGROUP_SIZE_Y;
+            cpass.dispatch_workgroups(dispatch_x, dispatch_y, 1);
         }
         // Now we use our direct reference to the output_buffer.
         encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, output_buffer_size);
