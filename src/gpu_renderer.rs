@@ -45,7 +45,7 @@ struct RenderParams {
     seed2: u32,
 }
 
-fn detect_gpu_workload(adapter: &wgpu::Adapter) -> u64 {
+fn detect_gpu_workload(adapter: &wgpu::Adapter, scene: &Scene) -> u64 {
     let limits = adapter.limits();
     let invocations = limits.max_compute_invocations_per_workgroup as u64;
     let groups = limits.max_compute_workgroups_per_dimension as u64;
@@ -55,9 +55,17 @@ fn detect_gpu_workload(adapter: &wgpu::Adapter) -> u64 {
         DeviceType::DiscreteGpu => 3,
         _ => 2,
     };
+    let mut tri_count = 0u64;
+    for obj in &scene.objects {
+        if let Object::Mesh(m) = obj {
+            tri_count += m.triangles.len() as u64;
+        }
+    }
     // Use a fraction of the theoretical maximum to stay within driver limits
-    let workload = invocations.saturating_mul(groups).saturating_mul(device_factor) / 2;
-    workload.clamp(10_000_000, 40_000_000)
+    // and scale down if there are many triangles to avoid timeouts.
+    let base = invocations.saturating_mul(groups).saturating_mul(device_factor) / 2;
+    let complexity = 1 + tri_count / 1000;
+    (base / complexity).clamp(10_000_000, 40_000_000)
 }
 
 #[repr(C)]
@@ -135,7 +143,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
     let target_workload_per_dispatch: u64 = scene
         .render
         .gpu_workload
-        .unwrap_or_else(|| detect_gpu_workload(&adapter));
+        .unwrap_or_else(|| detect_gpu_workload(&adapter, scene));
     println!("Target workload per dispatch: {}", target_workload_per_dispatch);
     let pixels = (width * height) as u64;
 
