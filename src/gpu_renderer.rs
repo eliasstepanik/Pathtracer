@@ -34,6 +34,7 @@ struct CameraUniform {
     triangle_count: u32,
     aperture: f32,
     focus_dist: f32,
+    _pad: [u32; 2],
 }
 
 #[repr(C)]
@@ -317,6 +318,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
             triangle_count: tri_count,
             aperture: scene.camera.aperture,
             focus_dist,
+            _pad: [0, 0],
         };
 
         let (bind_group, cam_buffer) = create_dispatch_resources(
