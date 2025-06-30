@@ -37,6 +37,9 @@ struct CameraUniform {
     _pad: [u32; 2],
 }
 
+// Size of `CameraUniform` padded to 16 bytes to satisfy WGSL layout.
+const CAMERA_SIZE: usize = (std::mem::size_of::<CameraUniform>() + 15) & !15;
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct RenderParams {
@@ -323,6 +326,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
 
         let (bind_group, cam_buffer) = create_dispatch_resources(
             &device,
+            &queue,
             &pipeline,
             &cam,
             &params,
@@ -647,6 +651,7 @@ fn create_compute_pipeline(
 // Helper to create resources for a single dispatch
 fn create_dispatch_resources(
     device: &wgpu::Device,
+    queue: &wgpu::Queue,
     pipeline: &wgpu::ComputePipeline,
     cam: &CameraUniform,
     params: &RenderParams,
@@ -654,11 +659,13 @@ fn create_dispatch_resources(
     scene_buffers: &SceneBuffers,
     output_buffer: &wgpu::Buffer,
 ) -> (wgpu::BindGroup, wgpu::Buffer) {
-    let cam_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let cam_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Camera"),
-        contents: bytemuck::bytes_of(cam),
+        size: CAMERA_SIZE as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
     });
+    queue.write_buffer(&cam_buffer, 0, bytemuck::bytes_of(cam));
     let params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Params"),
         contents: bytemuck::bytes_of(params),
