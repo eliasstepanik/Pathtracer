@@ -3,6 +3,7 @@ mod ggx;
 mod gpu_renderer;
 mod light;
 mod material;
+mod bvh;
 mod mesh;
 mod object;
 mod plane;

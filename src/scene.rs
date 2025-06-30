@@ -194,12 +194,12 @@ pub fn load(path: &str) -> Scene {
                         crate::mesh::Triangle { v0, v1, v2, normal }
                     })
                     .collect();
-                objects.push(Object::Mesh(crate::mesh::Mesh {
-                    name: mesh.name,
+                objects.push(Object::Mesh(crate::mesh::Mesh::new(
+                    mesh.name,
                     triangles,
                     material,
-                    in_focus: mesh.in_focus,
-                }));
+                    mesh.in_focus,
+                )));
             }
         }
     }

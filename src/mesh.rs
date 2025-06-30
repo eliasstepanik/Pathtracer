@@ -1,4 +1,4 @@
-use crate::{algebra::Vec3, material::Material};
+use crate::{algebra::Vec3, material::Material, bvh::BvhNode};
 
 #[derive(Clone)]
 pub struct Triangle {
@@ -8,35 +8,44 @@ pub struct Triangle {
     pub normal: Vec3,
 }
 
-#[derive(Clone)]
 pub struct Mesh {
     pub name: String,
     pub triangles: Vec<Triangle>,
+    pub bvh: BvhNode,
     pub material: Material,
     pub in_focus: bool,
 }
 
-impl Mesh {
-    pub fn hit(&self, ro: Vec3, rd: Vec3) -> Option<(f32, Vec3, Material)> {
-        let mut closest_t = f32::INFINITY;
-        let mut hit_normal = Vec3(0.0, 0.0, 0.0);
-        for tri in &self.triangles {
-            if let Some(t) = triangle_intersect(tri, ro, rd) {
-                if t > 1e-4 && t < closest_t {
-                    closest_t = t;
-                    hit_normal = tri.normal;
-                }
-            }
-        }
-        if closest_t < f32::INFINITY {
-            Some((closest_t, hit_normal, self.material))
-        } else {
-            None
+impl Clone for Mesh {
+    fn clone(&self) -> Self {
+        let triangles = self.triangles.clone();
+        let indices: Vec<usize> = (0..triangles.len()).collect();
+        let bvh = BvhNode::build(&triangles, &indices);
+        Self {
+            name: self.name.clone(),
+            triangles,
+            bvh,
+            material: self.material,
+            in_focus: self.in_focus,
         }
     }
 }
 
-fn triangle_intersect(tri: &Triangle, ro: Vec3, rd: Vec3) -> Option<f32> {
+impl Mesh {
+    pub fn new(name: String, triangles: Vec<Triangle>, material: Material, in_focus: bool) -> Self {
+        let indices: Vec<usize> = (0..triangles.len()).collect();
+        let bvh = BvhNode::build(&triangles, &indices);
+        Self { name, triangles, bvh, material, in_focus }
+    }
+
+    pub fn hit(&self, ro: Vec3, rd: Vec3) -> Option<(f32, Vec3, Material)> {
+        let mut result: Option<(f32, Vec3)> = None;
+        self.bvh.traverse(&self.triangles, ro, rd, &mut result);
+        result.map(|(t, n)| (t, n, self.material))
+    }
+}
+
+pub fn triangle_intersect(tri: &Triangle, ro: Vec3, rd: Vec3) -> Option<f32> {
     let e1 = tri.v1 - tri.v0;
     let e2 = tri.v2 - tri.v0;
     let p = rd.cross(e2);
