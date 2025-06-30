@@ -133,6 +133,56 @@ struct MeshBound {
     center_radius: [f32; 4],
 }
 
+struct SceneBuffers {
+    spheres: wgpu::Buffer,
+    planes: wgpu::Buffer,
+    triangles: wgpu::Buffer,
+    mesh_bounds: wgpu::Buffer,
+    mesh_materials: wgpu::Buffer,
+}
+
+fn create_scene_buffers(
+    device: &wgpu::Device,
+    spheres: &[SphereData],
+    planes: &[PlaneData],
+    triangles: &[TriangleData],
+    mesh_bounds: &[MeshBound],
+    mesh_materials: &[MeshMaterial],
+) -> SceneBuffers {
+    let spheres_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Spheres"),
+        contents: bytemuck::cast_slice(spheres),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let planes_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Planes"),
+        contents: bytemuck::cast_slice(planes),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let tris_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Triangles"),
+        contents: bytemuck::cast_slice(triangles),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let bounds_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("MeshBounds"),
+        contents: bytemuck::cast_slice(mesh_bounds),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let materials_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("MeshMaterials"),
+        contents: bytemuck::cast_slice(mesh_materials),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    SceneBuffers {
+        spheres: spheres_buf,
+        planes: planes_buf,
+        triangles: tris_buf,
+        mesh_bounds: bounds_buf,
+        mesh_materials: materials_buf,
+    }
+}
+
 async fn render_async(scene: &Scene) -> RgbaImage {
     let instance = wgpu::Instance::default();
     let adapter = instance
@@ -208,6 +258,15 @@ async fn render_async(scene: &Scene) -> RgbaImage {
         plane_count,
         tri_count,
     ) = get_object_data(scene);
+
+    let scene_buffers = create_scene_buffers(
+        &device,
+        &spheres,
+        &planes,
+        &tris,
+        &mesh_bounds,
+        &mesh_materials,
+    );
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Pathtrace Shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("gpu_pathtrace.wgsl").into()),
@@ -264,11 +323,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
             &cam,
             &params,
             &light_uniform,
-            &spheres,
-            &planes,
-            &tris,
-            &mesh_bounds,
-            &mesh_materials,
+            &scene_buffers,
             &output_buffer,
         );
 
@@ -578,11 +633,7 @@ fn create_dispatch_resources(
     cam: &CameraUniform,
     params: &RenderParams,
     light_uniform: &LightUniform,
-    spheres: &[SphereData],
-    planes: &[PlaneData],
-    triangles: &[TriangleData],
-    mesh_bounds: &[MeshBound],
-    mesh_materials: &[MeshMaterial],
+    scene_buffers: &SceneBuffers,
     output_buffer: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     let cam_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -599,31 +650,6 @@ fn create_dispatch_resources(
         label: Some("Light"),
         contents: bytemuck::bytes_of(light_uniform),
         usage: wgpu::BufferUsages::UNIFORM,
-    });
-    let sphere_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Spheres"),
-        contents: bytemuck::cast_slice(spheres),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let plane_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Planes"),
-        contents: bytemuck::cast_slice(planes),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let tri_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Triangles"),
-        contents: bytemuck::cast_slice(triangles),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let mesh_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("MeshBounds"),
-        contents: bytemuck::cast_slice(mesh_bounds),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("MeshMaterials"),
-        contents: bytemuck::cast_slice(mesh_materials),
-        usage: wgpu::BufferUsages::STORAGE,
     });
 
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -644,23 +670,23 @@ fn create_dispatch_resources(
             },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: sphere_buffer.as_entire_binding(),
+                resource: scene_buffers.spheres.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 4,
-                resource: plane_buffer.as_entire_binding(),
+                resource: scene_buffers.planes.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 5,
-                resource: tri_buffer.as_entire_binding(),
+                resource: scene_buffers.triangles.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 6,
-                resource: mesh_buffer.as_entire_binding(),
+                resource: scene_buffers.mesh_bounds.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 7,
-                resource: material_buffer.as_entire_binding(),
+                resource: scene_buffers.mesh_materials.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 8,
