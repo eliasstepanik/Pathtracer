@@ -110,10 +110,7 @@ fn main() {
         println!("Running GPU renderer...");
         let rgba_img = gpu_renderer::render(&scene);
 
-        // --- START: BUG FIX ---
-        // Replace the hardcoded '1' with the actual sample count from the scene file.
         let name = render_image_name(width, height, samples, aperture, focus);
-        // --- END: BUG FIX ---
 
         if let Some(dir) = Path::new(&name).parent() {
             fs::create_dir_all(dir).expect("Failed to create renders directory");

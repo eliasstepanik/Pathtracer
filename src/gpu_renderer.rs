@@ -1,4 +1,3 @@
-// C:\Users\Elias Stepanik\RustroverProjects\Pathtracer\src\gpu_renderer.rs
 
 use crate::{object::Object, scene::Scene};
 use bytemuck::{Pod, Zeroable};
@@ -238,9 +237,6 @@ async fn render_async(scene: &Scene) -> RgbaImage {
             focus_dist,
         };
 
-        // --- START: BUG FIX ---
-        // Instead of a flawed helper trait, we create the resources and hold onto
-        // the output_buffer directly.
         let bind_group = create_dispatch_resources(
                 &device,
                 &pipeline,
@@ -268,7 +264,6 @@ async fn render_async(scene: &Scene) -> RgbaImage {
         }
         // Now we use our direct reference to the output_buffer.
         encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, output_buffer_size);
-        // --- END: BUG FIX ---
 
         queue.submit(Some(encoder.finish()));
 

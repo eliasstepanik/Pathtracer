@@ -1,4 +1,3 @@
-// C:\Users\Elias Stepanik\RustroverProjects\Pathtracer\src\gpu_pathtrace.wgsl
 
 const PI: f32 = 3.1415926535;
 const SHADOW_SAMPLES: u32 = 4u;
@@ -10,7 +9,6 @@ struct Sphere { center: vec4<f32>, color: vec4<f32>, radius: f32, metallic: f32,
 struct Plane { point: vec4<f32>, normal: vec4<f32>, u: vec4<f32>, v: vec4<f32>, color: vec4<f32>, metallic: f32, roughness: f32, ior: f32, _pad: f32 };
 struct Triangle { v0: vec4<f32>, v1: vec4<f32>, v2: vec4<f32>, normal: vec4<f32>, color: vec4<f32>, metallic: f32, roughness: f32, ior: f32, _pad: f32 };
 
-// --- START: BUG FIX ---
 // The output buffer must match the data type the CPU expects for accumulation.
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<uniform> params: RenderParams;
@@ -19,7 +17,6 @@ struct Triangle { v0: vec4<f32>, v1: vec4<f32>, v2: vec4<f32>, normal: vec4<f32>
 @group(0) @binding(4) var<storage, read> planes: array<Plane>;
 @group(0) @binding(5) var<storage, read> triangles: array<Triangle>;
 @group(0) @binding(6) var<storage, read_write> output: array<vec4<f32>>;
-// --- END: BUG FIX ---
 
 struct Ray { origin: vec3<f32>, dir: vec3<f32> };
 struct Material { color: vec3<f32>, metallic: f32, roughness: f32, ior: f32 };
@@ -127,10 +124,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    // --- START: BUG FIX ---
     // The shader now returns the SUM of colors for its chunk of samples.
     // The CPU will handle averaging, tonemapping, and gamma correction.
     let index = gid.y * camera.width + gid.x;
     output[index] = vec4(final_color, 1.0);
-    // --- END: BUG FIX ---
 }
