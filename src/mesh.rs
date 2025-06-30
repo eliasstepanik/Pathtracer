@@ -12,6 +12,8 @@ pub struct Mesh {
     pub name: String,
     pub triangles: Vec<Triangle>,
     pub bvh: BvhNode,
+    pub bound_center: Vec3,
+    pub bound_radius: f32,
     pub material: Material,
     pub in_focus: bool,
 }
@@ -21,10 +23,15 @@ impl Clone for Mesh {
         let triangles = self.triangles.clone();
         let indices: Vec<usize> = (0..triangles.len()).collect();
         let bvh = BvhNode::build(&triangles, &indices);
+        let bbox = bvh.bbox();
+        let center = (bbox.min + bbox.max).scale(0.5);
+        let radius = (bbox.max - center).norm();
         Self {
             name: self.name.clone(),
             triangles,
             bvh,
+            bound_center: center,
+            bound_radius: radius,
             material: self.material,
             in_focus: self.in_focus,
         }
@@ -35,7 +42,10 @@ impl Mesh {
     pub fn new(name: String, triangles: Vec<Triangle>, material: Material, in_focus: bool) -> Self {
         let indices: Vec<usize> = (0..triangles.len()).collect();
         let bvh = BvhNode::build(&triangles, &indices);
-        Self { name, triangles, bvh, material, in_focus }
+        let bbox = bvh.bbox();
+        let center = (bbox.min + bbox.max).scale(0.5);
+        let radius = (bbox.max - center).norm();
+        Self { name, triangles, bvh, bound_center: center, bound_radius: radius, material, in_focus }
     }
 
     pub fn hit(&self, ro: Vec3, rd: Vec3) -> Option<(f32, Vec3, Material)> {

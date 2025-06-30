@@ -70,6 +70,12 @@ pub enum BvhNode {
 }
 
 impl BvhNode {
+    pub fn bbox(&self) -> Aabb {
+        match self {
+            BvhNode::Leaf { bbox, .. } => *bbox,
+            BvhNode::Node { bbox, .. } => *bbox,
+        }
+    }
     pub fn build(tris: &[Triangle], indices: &[usize]) -> Self {
         let mut bbox = Aabb::empty();
         for &i in indices {
