@@ -25,6 +25,7 @@ struct CameraUniform {
     forward: [f32; 4],
     up: [f32; 4],
     right: [f32; 4],
+    tile_origin: [u32; 2],
     width: u32,
     height: u32,
     fov: f32,
@@ -297,7 +298,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
             seed2: rng.gen(),
         };
 
-        let cam = CameraUniform {
+        let mut cam = CameraUniform {
             pos: [
                 scene.camera.pos.0,
                 scene.camera.pos.1,
@@ -307,6 +308,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
             forward: [forward.0, forward.1, forward.2, 0.0],
             up: [up.0, up.1, up.2, 0.0], // Send the correct up vector
             right: [right.0, right.1, right.2, 0.0],
+            tile_origin: [0, 0],
             width,
             height,
             fov: scene.camera.fov,
@@ -317,7 +319,7 @@ async fn render_async(scene: &Scene) -> RgbaImage {
             focus_dist,
         };
 
-        let bind_group = create_dispatch_resources(
+        let (bind_group, cam_buffer) = create_dispatch_resources(
             &device,
             &pipeline,
             &cam,
@@ -336,9 +338,23 @@ async fn render_async(scene: &Scene) -> RgbaImage {
             });
             cpass.set_pipeline(&pipeline);
             cpass.set_bind_group(0, &bind_group, &[]);
-            let dispatch_x = (width + WORKGROUP_SIZE_X - 1) / WORKGROUP_SIZE_X;
-            let dispatch_y = (height + WORKGROUP_SIZE_Y - 1) / WORKGROUP_SIZE_Y;
-            cpass.dispatch_workgroups(dispatch_x, dispatch_y, 1);
+
+            const TILE: u32 = 256;
+            let mut ty = 0;
+            while ty < height {
+                let th = (height - ty).min(TILE);
+                let mut tx = 0;
+                while tx < width {
+                    let tw = (width - tx).min(TILE);
+                    cam.tile_origin = [tx, ty];
+                    queue.write_buffer(&cam_buffer, 0, bytemuck::bytes_of(&cam));
+                    let dispatch_x = (tw + WORKGROUP_SIZE_X - 1) / WORKGROUP_SIZE_X;
+                    let dispatch_y = (th + WORKGROUP_SIZE_Y - 1) / WORKGROUP_SIZE_Y;
+                    cpass.dispatch_workgroups(dispatch_x, dispatch_y, 1);
+                    tx += TILE;
+                }
+                ty += TILE;
+            }
         }
         // Now we use our direct reference to the output_buffer.
         encoder.copy_buffer_to_buffer(&output_buffer, 0, &staging_buffer, 0, output_buffer_size);
@@ -635,7 +651,7 @@ fn create_dispatch_resources(
     light_uniform: &LightUniform,
     scene_buffers: &SceneBuffers,
     output_buffer: &wgpu::Buffer,
-) -> wgpu::BindGroup {
+) -> (wgpu::BindGroup, wgpu::Buffer) {
     let cam_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Camera"),
         contents: bytemuck::bytes_of(cam),
@@ -695,5 +711,5 @@ fn create_dispatch_resources(
         ],
     });
 
-    bind_group
+    (bind_group, cam_buffer)
 }

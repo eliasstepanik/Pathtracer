@@ -2,7 +2,7 @@
 const PI: f32 = 3.1415926535;
 const SHADOW_SAMPLES: u32 = 4u;
 
-struct Camera { pos: vec4<f32>, forward: vec4<f32>, up: vec4<f32>, right: vec4<f32>, width: u32, height: u32, fov: f32, sphere_count: u32, plane_count: u32, triangle_count: u32, aperture: f32, focus_dist: f32 };
+struct Camera { pos: vec4<f32>, forward: vec4<f32>, up: vec4<f32>, right: vec4<f32>, tile_origin: vec2<u32>, width: u32, height: u32, fov: f32, sphere_count: u32, plane_count: u32, triangle_count: u32, aperture: f32, focus_dist: f32 };
 struct RenderParams { samples_per_pixel: u32, max_bounces: u32, seed1: u32, seed2: u32 };
 struct Light { pos: vec4<f32>, intensity: vec4<f32>, u: vec4<f32>, v: vec4<f32> };
 struct Sphere { center: vec4<f32>, color: vec4<f32>, radius: f32, metallic: f32, roughness: f32, ior: f32 };
@@ -61,16 +61,17 @@ fn aces_film(c: vec3<f32>) -> vec3<f32> { let a = 2.51; let b = 0.03; let c2 = 2
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= camera.width || gid.y >= camera.height) { return; }
-    init_rand(gid.xy, vec2(params.seed1, params.seed2));
+    let pixel = gid.xy + camera.tile_origin;
+    if (pixel.x >= camera.width || pixel.y >= camera.height) { return; }
+    init_rand(pixel, vec2(params.seed1, params.seed2));
     var final_color = vec3(0.0);
     for (var s = 0u; s < params.samples_per_pixel; s = s + 1u) {
         let aspect = f32(camera.width) / f32(camera.height);
         let scale = tan(radians(camera.fov) * 0.5);
         let right = camera.right.xyz;
         let up = camera.up.xyz;
-        let u_offset = ( (f32(gid.x) + rand()) / f32(camera.width) - 0.5) * 2.0 * aspect * scale;
-        let v_offset = -( (f32(gid.y) + rand()) / f32(camera.height) - 0.5) * 2.0 * scale;
+        let u_offset = ( (f32(pixel.x) + rand()) / f32(camera.width) - 0.5) * 2.0 * aspect * scale;
+        let v_offset = -( (f32(pixel.y) + rand()) / f32(camera.height) - 0.5) * 2.0 * scale;
         let rd0 = normalize(right * u_offset + up * v_offset + camera.forward.xyz);
         let lens_rand = rand_in_unit_disk() * camera.aperture;
         let origin_offset = right * lens_rand.x + up * lens_rand.y;
@@ -140,6 +141,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // The shader now returns the SUM of colors for its chunk of samples.
     // The CPU will handle averaging, tonemapping, and gamma correction.
-    let index = gid.y * camera.width + gid.x;
+    let index = pixel.y * camera.width + pixel.x;
     output[index] = vec4(final_color, 1.0);
 }
