@@ -69,7 +69,7 @@ fn detect_gpu_workload(adapter: &wgpu::Adapter, scene: &Scene) -> u64 {
         .saturating_mul(device_factor)
         / 4;
     let complexity = 1 + tri_count / 500;
-    (base / complexity).clamp(5_000_000, 20_000_000)
+    (base / complexity).clamp(5_000_000, 40_000_000)
 }
 
 #[repr(C)]

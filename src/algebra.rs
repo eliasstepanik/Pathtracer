@@ -37,6 +37,25 @@ impl Vec3 {
     {
         Self(f(self.0), f(self.1), f(self.2))
     }
+
+    #[inline]
+    pub fn min(self, v: Self) -> Self {
+        Self(self.0.min(v.0), self.1.min(v.1), self.2.min(v.2))
+    }
+
+    #[inline]
+    pub fn max(self, v: Self) -> Self {
+        Self(self.0.max(v.0), self.1.max(v.1), self.2.max(v.2))
+    }
+
+    #[inline]
+    pub fn component(&self, axis: usize) -> f32 {
+        match axis {
+            0 => self.0,
+            1 => self.1,
+            _ => self.2,
+        }
+    }
 }
 
 impl Add for Vec3 { type Output = Self; #[inline] fn add(self, v: Self) -> Self { Self(self.0+v.0, self.1+v.1, self.2+v.2) } }
