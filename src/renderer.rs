@@ -6,9 +6,8 @@ use crate::{
     object::Object,
     tonemap,
 };
-use image::Rgb;
 use rand::Rng;
-use rayon::prelude::*;
+
 use std::f32::consts::PI;
 use std::ops::Mul;
 

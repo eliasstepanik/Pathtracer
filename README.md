@@ -210,6 +210,7 @@ Controls the rendering parameters.
 
 - `width`, `height`: Dimensions of the output image.
 - `samples`: Number of samples per pixel.
+- `gpu_workload` *(optional)*: Override the automatically detected GPU workload per dispatch. If omitted, the renderer estimates a safe workload from your GPU's reported limits and scales down automatically for scenes with many triangles. The detected value typically falls between 5 and 20 million operations per dispatch.
 
 ## Blender Integration
 
