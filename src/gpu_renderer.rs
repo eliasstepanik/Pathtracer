@@ -113,11 +113,24 @@ struct TriangleData {
     v1: [f32; 4],
     v2: [f32; 4],
     normal: [f32; 4],
+    mesh_index: u32,
+    _pad: [u32; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct MeshMaterial {
     color: [f32; 4],
     metallic: f32,
     roughness: f32,
     ior: f32,
     _pad: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct MeshBound {
+    center_radius: [f32; 4],
 }
 
 async fn render_async(scene: &Scene) -> RgbaImage {
@@ -185,8 +198,16 @@ async fn render_async(scene: &Scene) -> RgbaImage {
         v: [light.v.0, light.v.1, light.v.2, 0.0],
     };
 
-    let (spheres, planes, tris, sphere_count, plane_count, tri_count) =
-        get_object_data(scene);
+    let (
+        spheres,
+        planes,
+        tris,
+        mesh_bounds,
+        mesh_materials,
+        sphere_count,
+        plane_count,
+        tri_count,
+    ) = get_object_data(scene);
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Pathtrace Shader"),
         source: wgpu::ShaderSource::Wgsl(include_str!("gpu_pathtrace.wgsl").into()),
@@ -238,16 +259,18 @@ async fn render_async(scene: &Scene) -> RgbaImage {
         };
 
         let bind_group = create_dispatch_resources(
-                &device,
-                &pipeline,
-                &cam,
-                &params,
-                &light_uniform,
-                &spheres,
-                &planes,
-                &tris,
-                &output_buffer,
-            );
+            &device,
+            &pipeline,
+            &cam,
+            &params,
+            &light_uniform,
+            &spheres,
+            &planes,
+            &tris,
+            &mesh_bounds,
+            &mesh_materials,
+            &output_buffer,
+        );
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Encoder"),
@@ -307,6 +330,8 @@ fn get_object_data(scene: &Scene) -> (
     Vec<SphereData>,
     Vec<PlaneData>,
     Vec<TriangleData>,
+    Vec<MeshBound>,
+    Vec<MeshMaterial>,
     u32,
     u32,
     u32,
@@ -316,8 +341,11 @@ fn get_object_data(scene: &Scene) -> (
     const MAX_TRIS: usize = 8192;
     let mut spheres = vec![SphereData::zeroed(); MAX_SPHERES];
     let mut planes = vec![PlaneData::zeroed(); MAX_PLANES];
+    const MAX_MESHES: usize = 32;
     let mut tris = vec![TriangleData::zeroed(); MAX_TRIS];
-    let (mut scount, mut pcount, mut tcount) = (0, 0, 0);
+    let mut mesh_bounds = vec![MeshBound::zeroed(); MAX_MESHES];
+    let mut mesh_materials = vec![MeshMaterial::zeroed(); MAX_MESHES];
+    let (mut scount, mut pcount, mut tcount, mut mcount) = (0, 0, 0, 0);
     for obj in &scene.objects {
         match obj {
             Object::Sphere(s) if scount < MAX_SPHERES => {
@@ -356,15 +384,16 @@ fn get_object_data(scene: &Scene) -> (
                 pcount += 1;
             }
             Object::Mesh(m) => {
-                for tri in &m.triangles {
-                    if tcount >= MAX_TRIS {
-                        break;
-                    }
-                    tris[tcount] = TriangleData {
-                        v0: [tri.v0.0, tri.v0.1, tri.v0.2, 0.0],
-                        v1: [tri.v1.0, tri.v1.1, tri.v1.2, 0.0],
-                        v2: [tri.v2.0, tri.v2.1, tri.v2.2, 0.0],
-                        normal: [tri.normal.0, tri.normal.1, tri.normal.2, 0.0],
+                if mcount < MAX_MESHES {
+                    mesh_bounds[mcount] = MeshBound {
+                        center_radius: [
+                            m.bound_center.0,
+                            m.bound_center.1,
+                            m.bound_center.2,
+                            m.bound_radius,
+                        ],
+                    };
+                    mesh_materials[mcount] = MeshMaterial {
                         color: [
                             m.material.color.0,
                             m.material.color.1,
@@ -376,8 +405,22 @@ fn get_object_data(scene: &Scene) -> (
                         ior: m.material.ior,
                         _pad: 0.0,
                     };
+                }
+                for tri in &m.triangles {
+                    if tcount >= MAX_TRIS {
+                        break;
+                    }
+                    tris[tcount] = TriangleData {
+                        v0: [tri.v0.0, tri.v0.1, tri.v0.2, 0.0],
+                        v1: [tri.v1.0, tri.v1.1, tri.v1.2, 0.0],
+                        v2: [tri.v2.0, tri.v2.1, tri.v2.2, 0.0],
+                        normal: [tri.normal.0, tri.normal.1, tri.normal.2, 0.0],
+                        mesh_index: mcount as u32,
+                        _pad: [0; 3],
+                    };
                     tcount += 1;
                 }
+                mcount += 1;
             }
             _ => {}
         }
@@ -385,6 +428,8 @@ fn get_object_data(scene: &Scene) -> (
     spheres.truncate(scount);
     planes.truncate(pcount);
     tris.truncate(tcount);
+    mesh_bounds.truncate(mcount);
+    mesh_materials.truncate(mcount);
 
     if spheres.is_empty() {
         spheres.push(SphereData::zeroed());
@@ -395,10 +440,18 @@ fn get_object_data(scene: &Scene) -> (
     if tris.is_empty() {
         tris.push(TriangleData::zeroed());
     }
+    if mesh_bounds.is_empty() {
+        mesh_bounds.push(MeshBound::zeroed());
+    }
+    if mesh_materials.is_empty() {
+        mesh_materials.push(MeshMaterial::zeroed());
+    }
     (
         spheres,
         planes,
         tris,
+        mesh_bounds,
+        mesh_materials,
         scount as u32,
         pcount as u32,
         tcount as u32,
@@ -477,6 +530,26 @@ fn create_compute_pipeline(
                 binding: 6,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 7,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 8,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: false },
                     has_dynamic_offset: false,
                     min_binding_size: None,
@@ -508,6 +581,8 @@ fn create_dispatch_resources(
     spheres: &[SphereData],
     planes: &[PlaneData],
     triangles: &[TriangleData],
+    mesh_bounds: &[MeshBound],
+    mesh_materials: &[MeshMaterial],
     output_buffer: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     let cam_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -538,6 +613,16 @@ fn create_dispatch_resources(
     let tri_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Triangles"),
         contents: bytemuck::cast_slice(triangles),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let mesh_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("MeshBounds"),
+        contents: bytemuck::cast_slice(mesh_bounds),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("MeshMaterials"),
+        contents: bytemuck::cast_slice(mesh_materials),
         usage: wgpu::BufferUsages::STORAGE,
     });
 
@@ -571,6 +656,14 @@ fn create_dispatch_resources(
             },
             wgpu::BindGroupEntry {
                 binding: 6,
+                resource: mesh_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: material_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
                 resource: output_buffer.as_entire_binding(),
             },
         ],
